@@ -149,7 +149,7 @@ body {
   line-height: 1.15;
 }
 .brand__name {
-  font-size: 1rem;
+  font-size: 1.25rem;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -298,7 +298,7 @@ body {
 .row__url {
   min-width: 0;
   font-size: 0.75rem;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   /* A long self-hosted instance URL has no spaces; break it rather than overflow the row. */
   overflow-wrap: anywhere;
 }
@@ -355,7 +355,7 @@ body {
 }
 .field__hint {
   font-size: 0.75rem;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 
 .input,
@@ -582,6 +582,10 @@ body {
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-4);
+  transition: background 120ms var(--ease-out);
+}
+.tree-group__bar:hover {
+  background: var(--surface-2);
 }
 .tree-group__toggle {
   flex: 1;
@@ -675,7 +679,7 @@ body {
 }
 .ctl__hint {
   font-size: 0.75rem;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 .ctl__field {
   display: inline-flex;
