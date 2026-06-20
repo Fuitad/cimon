@@ -39,7 +39,9 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     setBusy(true);
     setError(null);
     try {
-      await addAccount(label.trim(), instanceUrl.trim(), token);
+      // Trim the token: a value pasted from a terminal or password manager often carries a
+      // trailing newline or space, which would otherwise fail validation as an opaque "rejected".
+      await addAccount(label.trim(), instanceUrl.trim(), token.trim());
       setToken("");
       setLabel("");
       onAccountsChanged();
@@ -60,18 +62,29 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
   };
 
   return (
-    <section>
-      <h2>{t("accounts.title")}</h2>
+    <section className="group">
+      <div className="group__head">
+        <h2 className="group__title">{t("accounts.title")}</h2>
+        <p className="group__desc">{t("accounts.desc")}</p>
+      </div>
 
-      {accounts.length === 0 ? (
-        <p>{t("accounts.empty")}</p>
-      ) : (
-        <ul>
+      {accounts.length > 0 && (
+        <ul className="rows" aria-label={t("accounts.title")}>
           {accounts.map((a) => (
-            <li key={a.id}>
-              <strong>{a.label || a.base_url}</strong>{" "}
-              <span>{t("accounts.connectedAs", { username: a.identity.username })}</span>{" "}
-              <button type="button" onClick={() => void onRemove(a.id)}>
+            <li className="row" key={a.id}>
+              <span className="dot dot--ok" aria-hidden="true" />
+              <div className="row__main">
+                <span className="row__title">{a.label || a.identity.username}</span>
+                <span className="row__meta">
+                  {t("accounts.connectedAs", { username: a.identity.username })}
+                  <span className="mono row__url">{a.base_url}</span>
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn btn--ghost btn--danger"
+                onClick={() => void onRemove(a.id)}
+              >
                 {t("common.remove")}
               </button>
             </li>
@@ -79,31 +92,61 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
         </ul>
       )}
 
-      <h3>{t("accounts.addHeading")}</h3>
-      <form onSubmit={(e) => void onSubmit(e)}>
-        <label>
-          {t("accounts.instanceUrl")}
-          <input value={instanceUrl} onChange={(e) => setInstanceUrl(e.target.value)} />
-        </label>
-        <label>
-          {t("accounts.label")}
+      <form className="form" onSubmit={(e) => void onSubmit(e)}>
+        <p className="form__legend">
+          {accounts.length > 0 ? t("accounts.addAnother") : t("accounts.addHeading")}
+        </p>
+        <div className="form__grid">
+          <label className="field">
+            <span className="field__label">{t("accounts.instanceUrl")}</span>
+            <input
+              className="input"
+              value={instanceUrl}
+              onChange={(e) => setInstanceUrl(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+          <label className="field">
+            <span className="field__label">{t("accounts.label")}</span>
+            <input
+              className="input"
+              value={label}
+              placeholder={t("accounts.labelPlaceholder")}
+              onChange={(e) => setLabel(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+        <label className="field">
+          <span className="field__label">{t("accounts.token")}</span>
           <input
-            value={label}
-            placeholder={t("accounts.labelPlaceholder")}
-            onChange={(e) => setLabel(e.target.value)}
+            className="input mono"
+            type="password"
+            value={token}
+            placeholder="glpat-..."
+            onChange={(e) => setToken(e.target.value)}
+            autoComplete="off"
           />
+          <span className="field__hint">{t("accounts.tokenHint")}</span>
         </label>
-        <label>
-          {t("accounts.token")}
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} />
-          <small>{t("accounts.tokenHint")}</small>
-        </label>
-        <button type="submit" disabled={busy || token.length === 0}>
-          {busy ? t("accounts.connecting") : t("accounts.connect")}
-        </button>
-      </form>
 
-      {error && <p role="alert">{errorText(error)}</p>}
+        {error && (
+          <p className="alert alert--error" role="alert">
+            {errorText(error)}
+          </p>
+        )}
+
+        <div className="form__actions">
+          <button
+            type="submit"
+            className="btn btn--primary"
+            disabled={busy || token.trim().length === 0 || instanceUrl.trim().length === 0}
+          >
+            {busy ? t("accounts.connecting") : t("accounts.connect")}
+          </button>
+        </div>
+      </form>
     </section>
   );
 }

@@ -73,10 +73,17 @@ struct GlUser {
 }
 
 #[derive(Deserialize)]
+struct GlNamespace {
+    full_path: String,
+}
+
+#[derive(Deserialize)]
 struct GlProject {
     id: u64,
     name: String,
     web_url: String,
+    /// Present in the `simple=true` project representation; absent only defensively.
+    namespace: Option<GlNamespace>,
 }
 
 #[derive(Deserialize)]
@@ -144,6 +151,7 @@ impl Provider for GitlabProvider {
                 id: p.id,
                 name: p.name,
                 web_url: p.web_url,
+                group: p.namespace.map(|n| n.full_path).unwrap_or_default(),
             }));
 
             if has_next_header {
@@ -273,7 +281,8 @@ mod tests {
                 ResponseTemplate::new(200)
                     .insert_header("x-next-page", "2")
                     .set_body_json(serde_json::json!([
-                        {"id": 1, "name": "alpha", "web_url": "http://x/alpha"}
+                        {"id": 1, "name": "alpha", "web_url": "http://x/alpha",
+                         "namespace": {"full_path": "acme/web"}}
                     ])),
             )
             .mount(&server)
@@ -284,6 +293,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("x-next-page", "")
+                    // No namespace: group falls back to empty rather than failing to parse.
                     .set_body_json(serde_json::json!([
                         {"id": 2, "name": "beta", "web_url": "http://x/beta"}
                     ])),
@@ -294,6 +304,11 @@ mod tests {
         let projects = provider(&server).list_projects().await.unwrap();
         let ids: Vec<u64> = projects.iter().map(|p| p.id).collect();
         assert_eq!(ids, vec![1, 2]);
+        assert_eq!(projects[0].group, "acme/web");
+        assert_eq!(
+            projects[1].group, "",
+            "missing namespace falls back to empty group"
+        );
     }
 
     #[tokio::test]

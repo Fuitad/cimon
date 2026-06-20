@@ -1,33 +1,43 @@
 {
   "app": {
     "name": "CIMon",
-    "tagline": "Moniteur de pipelines CI"
+    "tagline": "Moniteur de pipelines CI",
+    "privacy": "Local uniquement",
+    "privacyHint": "Fonctionne entièrement sur votre machine. Aucun cloud, aucune télémétrie. Votre jeton reste dans le trousseau du système."
   },
   "settings": {
     "title": "Paramètres",
     "general": "Général",
     "language": "Langue",
     "notifications": "Notifications",
+    "notificationsDesc": "Choisissez quels événements de pipeline déclenchent une notification native.",
     "onStart": "Pipeline démarré",
     "onSuccess": "Pipeline réussi",
     "onFail": "Pipeline échoué",
     "detail": "Niveau de détail",
+    "detailDesc": "Notifier au niveau du pipeline, au niveau de la tâche, ou les deux.",
     "pipelineLevel": "Niveau pipeline",
     "jobLevel": "Niveau tâche",
-    "pollInterval": "Intervalle d'interrogation (secondes)",
-    "launchAtLogin": "Lancer à l'ouverture de session"
+    "pollInterval": "Intervalle d'interrogation",
+    "pollIntervalHint": "Fréquence de vérification des changements.",
+    "seconds": "s",
+    "launchAtLogin": "Lancer à l'ouverture de session",
+    "launchAtLoginError": "Impossible de modifier le réglage de lancement à l'ouverture de session."
   },
   "language": {
     "en": "English",
     "fr": "Français"
   },
   "common": {
-    "remove": "Supprimer"
+    "remove": "Supprimer",
+    "retry": "Réessayer"
   },
   "accounts": {
     "title": "Comptes",
+    "desc": "Connectez un compte GitLab avec un jeton en lecture seule. Le jeton est conservé dans le trousseau du système, jamais sur le disque.",
     "empty": "Aucun compte pour l'instant. Ajoutez-en un pour commencer la surveillance.",
     "addHeading": "Ajouter un compte GitLab",
+    "addAnother": "Ajouter un autre compte",
     "instanceUrl": "URL de l'instance",
     "label": "Étiquette",
     "labelPlaceholder": "GitLab professionnel",
@@ -45,10 +55,17 @@
   },
   "projects": {
     "title": "Projets",
+    "desc": "Choisissez les projets que CIMon doit surveiller.",
+    "emptyTitle": "Aucun projet",
     "noAccounts": "Ajoutez d'abord un compte pour choisir des projets.",
     "search": "Rechercher des projets",
+    "selectedCount_one": "{{count}} surveillé",
+    "selectedCount_other": "{{count}} surveillés",
+    "ungrouped": "Autres",
+    "selectAllIn": "Surveiller tous les projets de {{group}}",
     "loading": "Chargement des projets...",
     "none": "Aucun projet trouvé pour ce compte.",
+    "noMatch": "Aucun projet ne correspond à votre recherche.",
     "loadError": "Impossible de charger les projets : {{message}}"
   }
 }

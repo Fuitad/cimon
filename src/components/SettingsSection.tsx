@@ -25,6 +25,9 @@ function SettingsSection() {
   const [rules, setRules] = useState<NotificationRules>(DEFAULT_RULES);
   const [intervalSecs, setIntervalSecs] = useState(30);
   const [launch, setLaunch] = useState(false);
+  // Launch-at-login touches OS login items, so unlike the pure-config writes it can genuinely
+  // fail (permissions, sandbox). Revert the optimistic toggle and surface it when it does.
+  const [launchError, setLaunchError] = useState(false);
 
   useEffect(() => {
     getConfig()
@@ -49,94 +52,112 @@ function SettingsSection() {
     void setLocale(code).catch(() => {});
   };
 
+  const onLaunch = (v: boolean) => {
+    setLaunch(v);
+    setLaunchError(false);
+    void setLaunchAtLogin(v).catch(() => {
+      setLaunch(!v); // revert the optimistic change to match the unchanged OS state
+      setLaunchError(true);
+    });
+  };
+
+  const toggle = (label: string, checked: boolean, onChange: (v: boolean) => void) => (
+    <label className="ctl">
+      <span className="ctl__label">{label}</span>
+      <input
+        className="switch"
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
+  );
+
   return (
-    <section>
-      <h2>{t("settings.title")}</h2>
+    <>
+      <section className="group">
+        <div className="group__head">
+          <h2 className="group__title">{t("settings.notifications")}</h2>
+          <p className="group__desc">{t("settings.notificationsDesc")}</p>
+        </div>
 
-      <h3>{t("settings.notifications")}</h3>
-      <label>
-        <input
-          type="checkbox"
-          checked={rules.on_start}
-          onChange={(e) => updateRules({ on_start: e.target.checked })}
-        />
-        {t("settings.onStart")}
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={rules.on_success}
-          onChange={(e) => updateRules({ on_success: e.target.checked })}
-        />
-        {t("settings.onSuccess")}
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={rules.on_fail}
-          onChange={(e) => updateRules({ on_fail: e.target.checked })}
-        />
-        {t("settings.onFail")}
-      </label>
+        <div className="ctl-list">
+          {toggle(t("settings.onStart"), rules.on_start, (v) => updateRules({ on_start: v }))}
+          {toggle(t("settings.onSuccess"), rules.on_success, (v) => updateRules({ on_success: v }))}
+          {toggle(t("settings.onFail"), rules.on_fail, (v) => updateRules({ on_fail: v }))}
+        </div>
 
-      <h3>{t("settings.detail")}</h3>
-      <label>
-        <input
-          type="checkbox"
-          checked={rules.pipeline_level}
-          onChange={(e) => updateRules({ pipeline_level: e.target.checked })}
-        />
-        {t("settings.pipelineLevel")}
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={rules.job_level}
-          onChange={(e) => updateRules({ job_level: e.target.checked })}
-        />
-        {t("settings.jobLevel")}
-      </label>
+        <div className="subgroup">
+          <h3 className="subgroup__title">{t("settings.detail")}</h3>
+          <p className="subgroup__desc">{t("settings.detailDesc")}</p>
+          <div className="ctl-list">
+            {toggle(t("settings.pipelineLevel"), rules.pipeline_level, (v) =>
+              updateRules({ pipeline_level: v }),
+            )}
+            {toggle(t("settings.jobLevel"), rules.job_level, (v) => updateRules({ job_level: v }))}
+          </div>
+        </div>
+      </section>
 
-      <h3>{t("settings.general")}</h3>
-      <label>
-        {t("settings.pollInterval")}
-        <input
-          type="number"
-          min={10}
-          max={3600}
-          value={intervalSecs}
-          onChange={(e) => setIntervalSecs(Number(e.target.value))}
-          onBlur={() => {
-            // Clamp to the backend's accepted range so an empty/0/out-of-range entry can't
-            // leave the UI showing a value the backend silently rejected.
-            const clamped = Math.min(3600, Math.max(10, Math.round(Number(intervalSecs) || 30)));
-            setIntervalSecs(clamped);
-            void setPollInterval(clamped).catch(() => {});
-          }}
-        />
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={launch}
-          onChange={(e) => {
-            setLaunch(e.target.checked);
-            void setLaunchAtLogin(e.target.checked).catch(() => {});
-          }}
-        />
-        {t("settings.launchAtLogin")}
-      </label>
-      <label>
-        {t("settings.language")}
-        <select value={i18n.resolvedLanguage ?? "en"} onChange={(e) => onLanguage(e.target.value)}>
-          {SUPPORTED_LNGS.map((lng) => (
-            <option key={lng} value={lng}>
-              {t(`language.${lng}`)}
-            </option>
-          ))}
-        </select>
-      </label>
-    </section>
+      <section className="group">
+        <div className="group__head">
+          <h2 className="group__title">{t("settings.general")}</h2>
+        </div>
+
+        <div className="ctl-list">
+          <label className="ctl">
+            <span className="ctl__text">
+              <span className="ctl__label">{t("settings.pollInterval")}</span>
+              <span className="ctl__hint">{t("settings.pollIntervalHint")}</span>
+            </span>
+            <span className="ctl__field">
+              <input
+                className="input input--num"
+                type="number"
+                min={10}
+                max={3600}
+                value={intervalSecs}
+                onChange={(e) => setIntervalSecs(Number(e.target.value))}
+                onBlur={() => {
+                  // Clamp to the backend's accepted range so an empty/0/out-of-range entry can't
+                  // leave the UI showing a value the backend silently rejected.
+                  const clamped = Math.min(
+                    3600,
+                    Math.max(10, Math.round(Number(intervalSecs) || 30)),
+                  );
+                  setIntervalSecs(clamped);
+                  void setPollInterval(clamped).catch(() => {});
+                }}
+              />
+              <span className="ctl__unit">{t("settings.seconds")}</span>
+            </span>
+          </label>
+
+          {toggle(t("settings.launchAtLogin"), launch, onLaunch)}
+
+          <label className="ctl">
+            <span className="ctl__label">{t("settings.language")}</span>
+            <select
+              className="select"
+              value={i18n.resolvedLanguage ?? "en"}
+              onChange={(e) => onLanguage(e.target.value)}
+            >
+              {SUPPORTED_LNGS.map((lng) => (
+                <option key={lng} value={lng}>
+                  {t(`language.${lng}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {launchError && (
+          <p className="alert alert--error" role="alert">
+            {t("settings.launchAtLoginError")}
+          </p>
+        )}
+      </section>
+    </>
   );
 }
 

@@ -12,6 +12,17 @@ Thanks for your interest in CIMon. Contributions are welcome. This document expl
    * `cargo install cargo-machete`
 5. Run the app in development mode with `npm run tauri dev`.
 
+### macOS: stop the Keychain prompt in dev (optional)
+
+On macOS, `npm run tauri dev` rebuilds the binary on every change. An unsigned binary gets a new code identity each rebuild, so the Keychain never remembers your "Always Allow" and re-prompts for access to the stored token. The repository ships a Cargo runner (`src-tauri/.cargo/config.toml` plus `src-tauri/scripts/dev-codesign.sh`) that signs the dev binary with a stable local identity before running it. It is inert until you create that identity, so there is nothing to do on Windows, on Linux, or in CI.
+
+To enable it, once:
+
+1. Create a self-signed code-signing certificate named `CIMon Dev`. In Keychain Access, open Certificate Assistant, choose "Create a Certificate", set the name to `CIMon Dev`, Identity Type to "Self Signed Root", and Certificate Type to "Code Signing", then create it. (Name it differently and set `CIMON_SIGN_IDENTITY` to match.)
+2. Run `npm run tauri dev` and approve the first Keychain prompt with "Always Allow".
+
+Because the binary now keeps a stable signature across rebuilds, the approval persists and the prompt stops. Without the certificate the runner simply runs the binary unsigned, exactly as before.
+
 ## Project layout
 
 * `src/` holds the React and TypeScript frontend (the settings window and tray menu content).
