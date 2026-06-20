@@ -46,6 +46,8 @@ export interface DiscoveredProject {
   id: number;
   name: string;
   web_url: string;
+  /** Owning group / namespace path (e.g. "acme/backend"); empty when the provider reports none. */
+  group: string;
 }
 
 export type CommandErrorKind =

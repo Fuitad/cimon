@@ -1,33 +1,43 @@
 {
   "app": {
     "name": "CIMon",
-    "tagline": "CI pipeline monitor"
+    "tagline": "CI pipeline monitor",
+    "privacy": "Local only",
+    "privacyHint": "Runs entirely on your machine. No cloud, no telemetry. Your token stays in the OS keychain."
   },
   "settings": {
     "title": "Settings",
     "general": "General",
     "language": "Language",
     "notifications": "Notifications",
+    "notificationsDesc": "Choose which pipeline events trigger a native notification.",
     "onStart": "Pipeline started",
     "onSuccess": "Pipeline succeeded",
     "onFail": "Pipeline failed",
     "detail": "Detail level",
+    "detailDesc": "Notify at the pipeline level, the job level, or both.",
     "pipelineLevel": "Pipeline-level",
     "jobLevel": "Job-level",
-    "pollInterval": "Poll interval (seconds)",
-    "launchAtLogin": "Launch at login"
+    "pollInterval": "Poll interval",
+    "pollIntervalHint": "How often to check for changes.",
+    "seconds": "sec",
+    "launchAtLogin": "Launch at login",
+    "launchAtLoginError": "Could not change the launch-at-login setting."
   },
   "language": {
     "en": "English",
     "fr": "Français"
   },
   "common": {
-    "remove": "Remove"
+    "remove": "Remove",
+    "retry": "Retry"
   },
   "accounts": {
     "title": "Accounts",
+    "desc": "Connect a GitLab account with a read-only token. The token is stored in your OS keychain, never on disk.",
     "empty": "No accounts yet. Add one to start monitoring.",
     "addHeading": "Add a GitLab account",
+    "addAnother": "Add another account",
     "instanceUrl": "Instance URL",
     "label": "Label",
     "labelPlaceholder": "Work GitLab",
@@ -45,10 +55,17 @@
   },
   "projects": {
     "title": "Projects",
+    "desc": "Pick the projects you want CIMon to watch.",
+    "emptyTitle": "No projects yet",
     "noAccounts": "Add an account first to choose projects.",
     "search": "Search projects",
+    "selectedCount_one": "{{count}} monitored",
+    "selectedCount_other": "{{count}} monitored",
+    "ungrouped": "Other",
+    "selectAllIn": "Monitor all projects in {{group}}",
     "loading": "Loading projects...",
     "none": "No projects found for this account.",
+    "noMatch": "No projects match your search.",
     "loadError": "Could not load projects: {{message}}"
   }
 }

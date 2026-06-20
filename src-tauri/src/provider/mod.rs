@@ -52,6 +52,9 @@ pub struct DiscoveredProject {
     pub id: u64,
     pub name: String,
     pub web_url: String,
+    /// Owning group / namespace path (e.g. `acme/backend`), used to group the selection list.
+    /// Empty when the provider reports no namespace.
+    pub group: String,
 }
 
 /// The read-only operations CIMon needs from a CI provider.

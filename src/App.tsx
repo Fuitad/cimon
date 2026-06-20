@@ -40,16 +40,32 @@ function App() {
   }, [i18n]);
 
   return (
-    <main className="container">
-      <header>
-        <h1>{t("app.name")}</h1>
-        <p>{t("app.tagline")}</p>
+    <div className="app">
+      <header className="app__header">
+        <div className="brand">
+          <img className="brand__mark" src="/cimon.svg" alt="" width={24} height={24} />
+          <div className="brand__text">
+            <span className="brand__name">{t("app.name")}</span>
+            <span className="brand__tagline">{t("app.tagline")}</span>
+          </div>
+        </div>
+        <span className="privacy" title={t("app.privacyHint")}>
+          <svg className="privacy__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M8 1a3.25 3.25 0 0 0-3.25 3.25V6H4.5A1.5 1.5 0 0 0 3 7.5v5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 11.5 6h-.25V4.25A3.25 3.25 0 0 0 8 1Zm1.75 5h-3.5V4.25a1.75 1.75 0 1 1 3.5 0V6Z"
+            />
+          </svg>
+          {t("app.privacy")}
+        </span>
       </header>
 
-      <AccountsSection accounts={accounts} onAccountsChanged={reloadAccounts} />
-      <ProjectsSection accounts={accounts} />
-      <SettingsSection />
-    </main>
+      <main className="app__main">
+        <AccountsSection accounts={accounts} onAccountsChanged={reloadAccounts} />
+        <ProjectsSection accounts={accounts} />
+        <SettingsSection />
+      </main>
+    </div>
   );
 }
 

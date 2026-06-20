@@ -1,0 +1,6 @@
+# Local dev convenience (macOS only): sign the freshly built binary with a stable identity before
+# running it, so `npm run tauri dev` stops re-prompting for Keychain access on every rebuild.
+# Harmless without the certificate (the runner falls back to running unsigned), and inert on
+# Windows/Linux and in CI. See CONTRIBUTING.md ("Stopping the macOS Keychain prompt in dev").
+[target.'cfg(target_os = "macos")']
+runner = "scripts/dev-codesign.sh"
