@@ -1,0 +1,47 @@
+# Claude Code
+scheduled_tasks.lock
+CLAUDE.md
+AGENTS.md
+benchmarks/**
+skill-creator
+spec-annotate
+changes-header
+review-output.json
+apm.yml
+docs/cairn
+.playwright-*/
+.apm
+.agents
+.codegraph
+.vercel
+.codex
+.review
+.mypy_cache
+.mcp.json
+demo
+skills-lock.json
+sx.json
+context-hud
+.env**
+playwright/
+.claude.backup.*
+*.backup
+.skillshare/
+.claude/skills/
+.claude/rules/
+.claude/commands/
+.claude/agents/
+.claude/.pilot-*-baseline.json
+.DS_Store
+
+# Build artifacts
+docs/plans
+docs/plans/.annotations/
+docs/license
+docs/video
+docs/slides
+docs/prd
+
+# Node / Tauri build
+node_modules/
+dist/

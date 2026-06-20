@@ -1,0 +1,51 @@
+name: Security audit
+
+# Nightly dependency vulnerability scan for both ecosystems: Rust crates (RustSec advisory DB
+# via cargo-audit) and JS packages (GitHub advisory DB via npm audit). Runs on a schedule so a
+# newly disclosed advisory against a pinned dependency surfaces even when no code has changed.
+# Also runnable on demand, and whenever a lockfile changes (so a dependency bump is checked).
+on:
+  schedule:
+    # 07:00 UTC every day.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "package-lock.json"
+      - ".github/workflows/security-audit.yml"
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: Rust crates (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      # cargo-audit reads Cargo.lock against the RustSec advisory DB; it does not build the app,
+      # so the Tauri system libraries are not needed here.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
+  npm-audit:
+    name: JS packages (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail on high/critical advisories. Moderate/low (mostly transitive dev tooling) are noisy
+      # for a gating job; raise the bar here and review the full report from the run logs.
+      - name: npm audit
+        run: npm audit --audit-level=high

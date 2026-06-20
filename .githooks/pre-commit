@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# CIMon pre-commit quality gate.
+#
+# Runs the same checks as the CI lint job (.github/workflows/ci.yml) so anything that would
+# fail CI fails here first. Checks the whole tree, warnings are treated as errors.
+#
+# Enabled with:  git config core.hooksPath .githooks
+# (run automatically by `npm install` via the "prepare" script in package.json).
+#
+# In a genuine emergency you can bypass with:  git commit --no-verify
+# This is discouraged: CI runs the identical gate and will reject the push.
+
+set -uo pipefail
+
+# Make Cargo-installed tools (e.g. cargo-machete) reachable regardless of the caller's PATH.
+export PATH="$HOME/.cargo/bin:$PATH"
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+fail=0
+section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+record()  { printf '  \033[31mFAILED:\033[0m %s\n' "$1"; fail=1; }
+
+# ---------- JS / TS ----------
+section "ESLint"
+npm run --silent lint || record "eslint"
+
+section "Prettier"
+npm run --silent format:check || record "prettier --check"
+
+section "TypeScript"
+npm run --silent typecheck || record "tsc --noEmit"
+
+section "knip (dead code / unused exports & deps)"
+npm run --silent knip || record "knip"
+
+# ---------- Rust (src-tauri) ----------
+section "rustfmt"
+( cd src-tauri && cargo fmt --check ) || record "cargo fmt --check"
+
+section "clippy"
+( cd src-tauri && cargo clippy --all-targets -- -D warnings ) || record "cargo clippy -D warnings"
+
+section "cargo-machete (unused dependencies)"
+if command -v cargo-machete >/dev/null 2>&1; then
+  ( cd src-tauri && cargo-machete ) || record "cargo-machete"
+else
+  echo "  cargo-machete not installed; skipping (install with: cargo install cargo-machete)"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n\033[31mPre-commit checks FAILED.\033[0m Fix the issues above, then commit again.\n'
+  exit 1
+fi
+printf '\n\033[32mAll pre-commit checks passed.\033[0m\n'
+exit 0

@@ -1,0 +1,54 @@
+{
+  "app": {
+    "name": "CIMon",
+    "tagline": "Moniteur de pipelines CI"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "general": "Général",
+    "language": "Langue",
+    "notifications": "Notifications",
+    "onStart": "Pipeline démarré",
+    "onSuccess": "Pipeline réussi",
+    "onFail": "Pipeline échoué",
+    "detail": "Niveau de détail",
+    "pipelineLevel": "Niveau pipeline",
+    "jobLevel": "Niveau tâche",
+    "pollInterval": "Intervalle d'interrogation (secondes)",
+    "launchAtLogin": "Lancer à l'ouverture de session"
+  },
+  "language": {
+    "en": "English",
+    "fr": "Français"
+  },
+  "common": {
+    "remove": "Supprimer"
+  },
+  "accounts": {
+    "title": "Comptes",
+    "empty": "Aucun compte pour l'instant. Ajoutez-en un pour commencer la surveillance.",
+    "addHeading": "Ajouter un compte GitLab",
+    "instanceUrl": "URL de l'instance",
+    "label": "Étiquette",
+    "labelPlaceholder": "GitLab professionnel",
+    "token": "Jeton d'accès",
+    "tokenHint": "Jeton d'accès personnel avec la portée read_api.",
+    "connect": "Connecter",
+    "connecting": "Connexion...",
+    "connectedAs": "Connecté en tant que {{username}}",
+    "error": {
+      "unauthorized": "Jeton refusé. Vérifiez le jeton et sa portée.",
+      "invalid_base_url": "URL d'instance invalide. Elle doit commencer par https.",
+      "network": "Impossible de joindre le serveur.",
+      "generic": "Une erreur s'est produite : {{message}}"
+    }
+  },
+  "projects": {
+    "title": "Projets",
+    "noAccounts": "Ajoutez d'abord un compte pour choisir des projets.",
+    "search": "Rechercher des projets",
+    "loading": "Chargement des projets...",
+    "none": "Aucun projet trouvé pour ce compte.",
+    "loadError": "Impossible de charger les projets : {{message}}"
+  }
+}

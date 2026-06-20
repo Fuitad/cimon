@@ -1,0 +1,73 @@
+_version: 2
+
+# Rust-core user-facing strings (notifications, native tray menu, status words).
+# en is canonical; fr is shipped in v1. Accented letters in values are content, not
+# decoration, and must be preserved. Interpolation uses %{var}.
+
+"notify.pipeline_started":
+  en: "%{project}: pipeline started"
+  fr: "%{project} : pipeline démarré"
+"notify.pipeline_succeeded":
+  en: "%{project}: pipeline succeeded"
+  fr: "%{project} : pipeline réussi"
+"notify.pipeline_failed":
+  en: "%{project}: pipeline failed"
+  fr: "%{project} : pipeline échoué"
+# Job-level titles. "tâche" (job) is feminine in French, so the participle agrees:
+# démarrée / réussie / échouée (vs the masculine pipeline forms above).
+"notify.job_started":
+  en: "%{project}: job %{job} started"
+  fr: "%{project} : tâche %{job} démarrée"
+"notify.job_succeeded":
+  en: "%{project}: job %{job} succeeded"
+  fr: "%{project} : tâche %{job} réussie"
+"notify.job_failed":
+  en: "%{project}: job %{job} failed"
+  fr: "%{project} : tâche %{job} échouée"
+"notify.body":
+  en: "%{branch} (%{status})"
+  fr: "%{branch} (%{status})"
+
+"tray.open_settings":
+  en: "Open Settings"
+  fr: "Ouvrir les paramètres"
+"tray.quit":
+  en: "Quit"
+  fr: "Quitter"
+"tray.no_projects":
+  en: "No projects monitored"
+  fr: "Aucun projet surveillé"
+
+# Shown once, the first time the app starts hidden, so the user knows where to find it (macOS
+# can also hide the menu bar icon itself when the bar is full).
+"tray.running_title":
+  en: "CIMon is running in your menu bar"
+  fr: "CIMon fonctionne dans votre barre de menus"
+"tray.running_body":
+  en: "Click the CIMon icon in the menu bar to open settings. If you do not see it, the menu bar may be full."
+  fr: "Cliquez sur l'icône CIMon dans la barre de menus pour ouvrir les paramètres. Si vous ne la voyez pas, la barre de menus est peut-être pleine."
+
+"status.running":
+  en: "running"
+  fr: "en cours"
+"status.success":
+  en: "succeeded"
+  fr: "réussi"
+"status.failed":
+  en: "failed"
+  fr: "échoué"
+"status.canceled":
+  en: "canceled"
+  fr: "annulé"
+"status.skipped":
+  en: "skipped"
+  fr: "ignoré"
+"status.pending":
+  en: "pending"
+  fr: "en attente"
+"status.manual":
+  en: "manual"
+  fr: "manuel"
+"status.other":
+  en: "unknown"
+  fr: "inconnu"

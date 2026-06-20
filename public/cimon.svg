@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CIMon app icon">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#1b2522"/>
+      <stop offset="70%" stop-color="#111816"/>
+      <stop offset="100%" stop-color="#070a0a"/>
+    </radialGradient>
+
+    <linearGradient id="rimGrad" x1="35" y1="20" x2="210" y2="235">
+      <stop offset="0%" stop-color="#5b646c"/>
+      <stop offset="45%" stop-color="#252b31"/>
+      <stop offset="100%" stop-color="#0d1115"/>
+    </linearGradient>
+
+    <linearGradient id="metalGrad" x1="78" y1="70" x2="178" y2="178">
+      <stop offset="0%" stop-color="#c5ccd0"/>
+      <stop offset="25%" stop-color="#6f7a81"/>
+      <stop offset="60%" stop-color="#2f383e"/>
+      <stop offset="100%" stop-color="#11181c"/>
+    </linearGradient>
+
+    <radialGradient id="ledGrad" cx="38%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#dcffd6"/>
+      <stop offset="18%" stop-color="#8cff6f"/>
+      <stop offset="58%" stop-color="#39e624"/>
+      <stop offset="100%" stop-color="#16a814"/>
+    </radialGradient>
+
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+
+    <filter id="greenGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.17  0 0 0 0 1.0  0 0 0 0 0.08  0 0 0 0.75 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="subtleInset" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#ffffff" flood-opacity="0.08"/>
+      <feDropShadow dx="0" dy="-3" stdDeviation="3" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- White app icon canvas -->
+  <rect width="256" height="256" rx="0" fill="#ffffff"/>
+
+  <!-- Main circular body -->
+  <circle cx="128" cy="128" r="108" fill="url(#rimGrad)" filter="url(#softShadow)"/>
+  <circle cx="128" cy="128" r="99" fill="url(#bgGrad)"/>
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#2d353b" stroke-width="2" opacity="0.75"/>
+
+  <!-- Radar / watcher rings -->
+  <path d="M78 73 A74 74 0 0 0 78 183" fill="none" stroke="#7d8982" stroke-width="8" stroke-linecap="round" opacity="0.22"/>
+  <path d="M178 73 A74 74 0 0 1 178 183" fill="none" stroke="#7d8982" stroke-width="8" stroke-linecap="round" opacity="0.22"/>
+  <path d="M89 92 A54 54 0 0 0 89 164" fill="none" stroke="#6bd85f" stroke-width="8" stroke-linecap="round" opacity="0.22"/>
+  <path d="M167 92 A54 54 0 0 1 167 164" fill="none" stroke="#6bd85f" stroke-width="8" stroke-linecap="round" opacity="0.22"/>
+
+  <!-- LED housing -->
+  <circle cx="128" cy="119" r="52" fill="url(#metalGrad)" filter="url(#subtleInset)"/>
+  <circle cx="128" cy="119" r="43" fill="#08120b"/>
+  <circle cx="128" cy="119" r="37" fill="url(#ledGrad)" filter="url(#greenGlow)"/>
+
+  <!-- LED highlight -->
+  <ellipse cx="113" cy="99" rx="13" ry="8" transform="rotate(-30 113 99)" fill="#ffffff" opacity="0.62"/>
+  <ellipse cx="132" cy="145" rx="29" ry="8" fill="#000000" opacity="0.13"/>
+
+  <!-- Pipeline motif -->
+  <g transform="translate(0 5)" opacity="0.92">
+    <line x1="83" y1="181" x2="173" y2="181" stroke="#8d979e" stroke-width="8" stroke-linecap="round"/>
+    <line x1="83" y1="181" x2="173" y2="181" stroke="#343d43" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="78" cy="181" r="15" fill="#c1c8cc"/>
+    <circle cx="128" cy="181" r="15" fill="#c1c8cc"/>
+    <circle cx="178" cy="181" r="15" fill="#c1c8cc"/>
+    <circle cx="78" cy="181" r="9" fill="#151c20"/>
+    <circle cx="128" cy="181" r="9" fill="#151c20"/>
+    <circle cx="178" cy="181" r="9" fill="#151c20"/>
+  </g>
+</svg>

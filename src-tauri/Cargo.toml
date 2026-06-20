@@ -1,0 +1,45 @@
+[package]
+name = "cimon"
+version = "0.1.0"
+description = "CIMon: a cross-platform CI pipeline monitor for the system tray / menu bar"
+authors = ["Pierre-Luc Brunet <fuitad@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/Fuitad/cimon"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "cimon_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+url = "2"
+keyring = "4"
+zeroize = "1"
+uuid = { version = "1", features = ["v4"] }
+rust-i18n = "4"
+sys-locale = "0.3"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[package.metadata.i18n]
+available-locales = ["en", "fr"]
+default-locale = "en"
+load-path = "locales"
+
