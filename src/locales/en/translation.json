@@ -1,0 +1,54 @@
+{
+  "app": {
+    "name": "CIMon",
+    "tagline": "CI pipeline monitor"
+  },
+  "settings": {
+    "title": "Settings",
+    "general": "General",
+    "language": "Language",
+    "notifications": "Notifications",
+    "onStart": "Pipeline started",
+    "onSuccess": "Pipeline succeeded",
+    "onFail": "Pipeline failed",
+    "detail": "Detail level",
+    "pipelineLevel": "Pipeline-level",
+    "jobLevel": "Job-level",
+    "pollInterval": "Poll interval (seconds)",
+    "launchAtLogin": "Launch at login"
+  },
+  "language": {
+    "en": "English",
+    "fr": "Français"
+  },
+  "common": {
+    "remove": "Remove"
+  },
+  "accounts": {
+    "title": "Accounts",
+    "empty": "No accounts yet. Add one to start monitoring.",
+    "addHeading": "Add a GitLab account",
+    "instanceUrl": "Instance URL",
+    "label": "Label",
+    "labelPlaceholder": "Work GitLab",
+    "token": "Access token",
+    "tokenHint": "Personal access token with the read_api scope.",
+    "connect": "Connect",
+    "connecting": "Connecting...",
+    "connectedAs": "Connected as {{username}}",
+    "error": {
+      "unauthorized": "Token rejected. Check the token and its scope.",
+      "invalid_base_url": "Invalid instance URL. It must start with https.",
+      "network": "Could not reach the server.",
+      "generic": "Something went wrong: {{message}}"
+    }
+  },
+  "projects": {
+    "title": "Projects",
+    "noAccounts": "Add an account first to choose projects.",
+    "search": "Search projects",
+    "loading": "Loading projects...",
+    "none": "No projects found for this account.",
+    "loadError": "Could not load projects: {{message}}"
+  }
+}
