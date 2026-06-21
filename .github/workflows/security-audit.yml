@@ -24,7 +24,7 @@ jobs:
     name: Rust crates (cargo-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       # cargo-audit reads Cargo.lock against the RustSec advisory DB; it does not build the app,
@@ -39,8 +39,8 @@ jobs:
     name: JS packages (npm audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
