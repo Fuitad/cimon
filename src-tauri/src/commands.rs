@@ -17,8 +17,9 @@ use crate::model::{
     Account, Config, Identity, MonitoredProject, NotificationRules, ProviderKind, MAX_POLL_SECS,
     MIN_POLL_SECS,
 };
-use crate::provider::gitlab::GitlabProvider;
-use crate::provider::{build_http_client, DiscoveredProject, Provider, ProviderError};
+use crate::provider::{
+    build_http_client, build_provider, DiscoveredProject, Provider, ProviderError,
+};
 use crate::secrets::{CachingTokenStore, KeyringStore, TokenStore};
 
 /// Machine-readable error category so the frontend can localize the message by `kind`.
@@ -111,6 +112,7 @@ async fn add_account_logic(
     tokens: &dyn TokenStore,
     cfg: &Mutex<Config>,
     cfg_path: &Path,
+    provider: ProviderKind,
     label: String,
     base_url: String,
     token: String,
@@ -118,9 +120,9 @@ async fn add_account_logic(
 ) -> Result<Identity, CommandError> {
     let normalized = validate_base_url(&base_url, allow_insecure)?;
 
-    // Validate the token against the provider BEFORE storing anything.
-    let provider = GitlabProvider::new(http.clone(), normalized.clone(), token.clone());
-    let identity = provider.validate_token().await?;
+    // Validate the token against the chosen provider BEFORE storing anything.
+    let client = build_provider(provider, http.clone(), normalized.clone(), token.clone());
+    let identity = client.validate_token().await?;
 
     let account_id = uuid::Uuid::new_v4().to_string();
 
@@ -130,7 +132,7 @@ async fn add_account_logic(
     let account = Account {
         id: account_id.clone(),
         label,
-        provider: ProviderKind::Gitlab,
+        provider,
         base_url: normalized,
         identity: identity.clone(),
     };
@@ -166,6 +168,18 @@ fn remove_account_logic(
     config::save(cfg_path, &guard).map_err(storage_err)
 }
 
+/// A GitHub `remote_ref` must be a well-formed `owner/repo`: exactly two non-empty path segments,
+/// no `.`/`..` traversal segment, no whitespace. This both guarantees a GitHub project can actually
+/// be addressed (it has no usable numeric API address) and prevents a frontend- or config-supplied
+/// value from splicing path-altering characters into the request URL.
+fn is_valid_github_ref(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('/').collect();
+    parts.len() == 2
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && *p != "." && *p != ".." && !p.contains(char::is_whitespace))
+}
+
 fn set_monitored_logic(
     cfg: &Mutex<Config>,
     cfg_path: &Path,
@@ -173,6 +187,25 @@ fn set_monitored_logic(
     projects: Vec<MonitoredProject>,
 ) -> Result<(), CommandError> {
     let mut guard = cfg.lock().unwrap();
+    // Backend validation (authoritative regardless of the frontend): a monitored GitHub project
+    // must carry a well-formed owner/repo, otherwise it can never poll (and a raw value could
+    // alter the request path). Validate the whole batch BEFORE mutating any state.
+    let is_github = guard
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .map(|a| a.provider == ProviderKind::Github)
+        .unwrap_or(false);
+    if is_github {
+        for p in &projects {
+            if !p.remote_ref.as_deref().is_some_and(is_valid_github_ref) {
+                return Err(CommandError::new(
+                    CommandErrorKind::InvalidInput,
+                    "GitHub project requires a valid owner/repo identifier",
+                ));
+            }
+        }
+    }
     // Replace only this account's selections; other accounts keep theirs.
     guard.monitored.retain(|m| m.account_id != account_id);
     for mut p in projects {
@@ -223,21 +256,21 @@ async fn list_discovered_logic(
     cfg: &Mutex<Config>,
     account_id: &str,
 ) -> Result<Vec<DiscoveredProject>, CommandError> {
-    // Read the account base URL under the lock, then release it before any await.
-    let base_url = {
+    // Read the account base URL and provider kind under the lock, then release it before any await.
+    let (base_url, kind) = {
         let guard = cfg.lock().unwrap();
         guard
             .accounts
             .iter()
             .find(|a| a.id == account_id)
-            .map(|a| a.base_url.clone())
+            .map(|a| (a.base_url.clone(), a.provider))
             .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "account not found"))?
     };
     let token = tokens
         .get(account_id)
         .map_err(storage_err)?
         .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "no token for account"))?;
-    let provider = GitlabProvider::new(http.clone(), base_url, token.expose().to_string());
+    let provider = build_provider(kind, http.clone(), base_url, token.expose().to_string());
     Ok(provider.list_projects().await?)
 }
 
@@ -274,6 +307,7 @@ impl AppState {
 #[tauri::command]
 pub async fn add_account(
     state: tauri::State<'_, AppState>,
+    provider: ProviderKind,
     label: String,
     base_url: String,
     token: String,
@@ -283,6 +317,7 @@ pub async fn add_account(
         &*state.tokens,
         &state.config,
         &state.config_path,
+        provider,
         label,
         base_url,
         token,
@@ -383,7 +418,7 @@ mod tests {
     use super::*;
     use crate::model::Config;
     use crate::secrets::MemoryTokenStore;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn temp_path(tag: &str) -> PathBuf {
@@ -464,6 +499,7 @@ mod tests {
             &tokens,
             &cfg,
             &path,
+            ProviderKind::Gitlab,
             "work".into(),
             server.uri(),
             "secret-tok".into(),
@@ -506,6 +542,7 @@ mod tests {
             &tokens,
             &cfg,
             &path,
+            ProviderKind::Gitlab,
             "x".into(),
             server.uri(),
             "bad".into(),
@@ -546,6 +583,7 @@ mod tests {
             &tokens,
             &cfg,
             &bad_path,
+            ProviderKind::Gitlab,
             "x".into(),
             server.uri(),
             "tok".into(),
@@ -558,6 +596,48 @@ mod tests {
         assert_eq!(cfg.lock().unwrap().accounts.len(), 0, "account rolled back");
         assert_eq!(tokens.count(), 0, "token rolled back, none orphaned");
         std::fs::remove_file(&base).ok();
+    }
+
+    #[tokio::test]
+    async fn add_account_github_stores_github_account() {
+        let server = MockServer::start().await;
+        // GitHub validates via /user (GHE path here, since server.uri() is an IP host) with a
+        // Bearer token. A GitLab provider would request /api/v4/user instead, so a stored Github
+        // account with this identity proves the provider dispatch routed to GithubProvider.
+        Mock::given(method("GET"))
+            .and(path("/api/v3/user"))
+            .and(header("Authorization", "Bearer gh-tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "login": "octocat", "name": "The Octocat", "email": null
+            })))
+            .mount(&server)
+            .await;
+
+        let path = temp_path("add-github");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let tokens = MemoryTokenStore::new();
+        let cfg = Mutex::new(Config::default());
+
+        let id = add_account_logic(
+            &build_http_client(),
+            &tokens,
+            &cfg,
+            &path,
+            ProviderKind::Github,
+            "gh".into(),
+            server.uri(),
+            "gh-tok".into(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(id.username, "octocat");
+        let guard = cfg.lock().unwrap();
+        assert_eq!(guard.accounts.len(), 1);
+        assert_eq!(guard.accounts[0].provider, ProviderKind::Github);
+        drop(guard);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
@@ -585,6 +665,7 @@ mod tests {
             project_id: id,
             name: "p".into(),
             web_url: "u".into(),
+            remote_ref: None,
         };
         set_monitored_logic(&cfg, &path, "acctA", vec![mk("acctA", 1)]).unwrap();
         set_monitored_logic(&cfg, &path, "acctB", vec![mk("acctB", 1)]).unwrap();
@@ -610,6 +691,53 @@ mod tests {
             1
         );
         drop(guard);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn set_monitored_rejects_github_project_without_valid_remote_ref() {
+        let path = temp_path("gh-monitored");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let cfg = Mutex::new(Config {
+            accounts: vec![Account {
+                id: "gh".into(),
+                label: "l".into(),
+                provider: ProviderKind::Github,
+                base_url: "https://github.com".into(),
+                identity: Identity {
+                    username: "u".into(),
+                    name: None,
+                    email: None,
+                },
+            }],
+            ..Config::default()
+        });
+        let mk = |remote_ref: Option<&str>| MonitoredProject {
+            account_id: "gh".into(),
+            project_id: 1,
+            name: "p".into(),
+            web_url: "u".into(),
+            remote_ref: remote_ref.map(str::to_string),
+        };
+        // Missing remote_ref: a GitHub project can never be addressed (owner/repo) -> rejected.
+        assert_eq!(
+            set_monitored_logic(&cfg, &path, "gh", vec![mk(None)])
+                .unwrap_err()
+                .kind,
+            CommandErrorKind::InvalidInput
+        );
+        // Malformed / path-altering remote_ref -> rejected (no raw splice into the request path).
+        assert!(set_monitored_logic(&cfg, &path, "gh", vec![mk(Some("../orgs/victim"))]).is_err());
+        assert!(set_monitored_logic(&cfg, &path, "gh", vec![mk(Some("noslash"))]).is_err());
+        assert!(set_monitored_logic(&cfg, &path, "gh", vec![mk(Some("owner/"))]).is_err());
+        assert_eq!(
+            cfg.lock().unwrap().monitored.len(),
+            0,
+            "nothing persisted on rejection"
+        );
+        // A well-formed owner/repo is accepted and persisted.
+        set_monitored_logic(&cfg, &path, "gh", vec![mk(Some("acme/web-app"))]).unwrap();
+        assert_eq!(cfg.lock().unwrap().monitored.len(), 1);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

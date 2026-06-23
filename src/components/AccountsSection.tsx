@@ -2,9 +2,17 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { addAccount, removeAccount } from "../api";
-import { asCommandError, type Account, type CommandError } from "../types";
+import { asCommandError, type Account, type CommandError, type ProviderKind } from "../types";
 
-const DEFAULT_INSTANCE = "https://gitlab.com";
+/** Default instance URL per provider, applied when the provider selector changes. */
+const DEFAULT_INSTANCE: Record<ProviderKind, string> = {
+  gitlab: "https://gitlab.com",
+  github: "https://github.com",
+};
+const TOKEN_PLACEHOLDER: Record<ProviderKind, string> = {
+  gitlab: "glpat-...",
+  github: "ghp-...",
+};
 
 interface AccountsSectionProps {
   accounts: Account[];
@@ -12,10 +20,11 @@ interface AccountsSectionProps {
   onAccountsChanged: () => void;
 }
 
-/** Add, list, and remove GitLab accounts. Tokens are sent once and never read back. */
+/** Add, list, and remove GitLab and GitHub accounts. Tokens are sent once and never read back. */
 function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) {
   const { t } = useTranslation();
-  const [instanceUrl, setInstanceUrl] = useState(DEFAULT_INSTANCE);
+  const [provider, setProvider] = useState<ProviderKind>("gitlab");
+  const [instanceUrl, setInstanceUrl] = useState(DEFAULT_INSTANCE.gitlab);
   const [label, setLabel] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,7 +50,7 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     try {
       // Trim the token: a value pasted from a terminal or password manager often carries a
       // trailing newline or space, which would otherwise fail validation as an opaque "rejected".
-      await addAccount(label.trim(), instanceUrl.trim(), token.trim());
+      await addAccount(provider, label.trim(), instanceUrl.trim(), token.trim());
       setToken("");
       setLabel("");
       onAccountsChanged();
@@ -59,6 +68,13 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     } catch (err) {
       setError(asCommandError(err));
     }
+  };
+
+  const onProviderChange = (next: ProviderKind) => {
+    setProvider(next);
+    // Reset the instance URL to the newly-selected provider's default host (the previous value was
+    // the other provider's). The user can still edit it for a self-hosted GitLab/GHE host.
+    setInstanceUrl(DEFAULT_INSTANCE[next]);
   };
 
   return (
@@ -98,6 +114,17 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
         </p>
         <div className="form__grid">
           <label className="field">
+            <span className="field__label">{t("accounts.providerLabel")}</span>
+            <select
+              className="input"
+              value={provider}
+              onChange={(e) => onProviderChange(e.target.value as ProviderKind)}
+            >
+              <option value="gitlab">GitLab</option>
+              <option value="github">GitHub</option>
+            </select>
+          </label>
+          <label className="field">
             <span className="field__label">{t("accounts.instanceUrl")}</span>
             <input
               className="input"
@@ -124,11 +151,13 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
             className="input mono"
             type="password"
             value={token}
-            placeholder="glpat-..."
+            placeholder={TOKEN_PLACEHOLDER[provider]}
             onChange={(e) => setToken(e.target.value)}
             autoComplete="off"
           />
-          <span className="field__hint">{t("accounts.tokenHint")}</span>
+          <span className="field__hint">
+            {provider === "github" ? t("accounts.tokenHintGithub") : t("accounts.tokenHint")}
+          </span>
         </label>
 
         {error && (

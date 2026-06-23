@@ -5,8 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::model::{Config, Job, Pipeline, PipelineStatus, MIN_POLL_SECS};
-use crate::provider::gitlab::GitlabProvider;
-use crate::provider::Provider;
+use crate::provider::{build_provider, Provider};
 use crate::secrets::TokenStore;
 
 /// `(account_id, project_id)` uniquely identifies a monitored project across accounts. A GitLab
@@ -197,13 +196,17 @@ pub async fn poll_once(
             Ok(Some(t)) => t,
             _ => continue, // no/unreadable token: skip this account this tick
         };
-        let provider = GitlabProvider::new(
+        let provider = build_provider(
+            acct.provider,
             http.clone(),
             acct.base_url.clone(),
             token.expose().to_string(),
         );
         for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
-            let pipelines = match provider.list_pipelines(mp.project_id).await {
+            let pipelines = match provider
+                .list_pipelines(mp.project_id, mp.remote_ref.as_deref())
+                .await
+            {
                 Ok(p) => p,
                 Err(_) => continue, // error isolation: skip this project this tick
             };
@@ -215,7 +218,10 @@ pub async fn poll_once(
             // isolated (skip job detection this tick) just like a pipeline-fetch error.
             if cfg.rules.job_level {
                 if let Some(newest) = pipelines.first() {
-                    if let Ok(jobs) = provider.list_jobs(mp.project_id, newest.id).await {
+                    if let Ok(jobs) = provider
+                        .list_jobs(mp.project_id, mp.remote_ref.as_deref(), newest.id)
+                        .await
+                    {
                         detected.extend(state.detect_jobs(&key, newest, &jobs));
                     }
                 }
@@ -274,6 +280,56 @@ mod tests {
     use crate::secrets::MemoryTokenStore;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn poll_once_dispatches_to_github_provider() {
+        let server = MockServer::start().await;
+        // GitHub Actions runs endpoint (GHE path, since server.uri() is an IP host). A GitLab
+        // provider would request `/api/v4/...` instead, so reaching this path AND parsing the
+        // run proves the dispatch routed to GithubProvider.
+        Mock::given(method("GET"))
+            .and(path("/api/v3/repos/acme/web-app/actions/runs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": 1,
+                "workflow_runs": [
+                    {"id": 7, "head_branch": "main", "head_sha": "a", "status": "completed",
+                     "conclusion": "failure", "html_url": "http://x/7", "updated_at": "t"}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let tokens = MemoryTokenStore::new();
+        tokens.store("gh", "tok").unwrap();
+        let cfg = Config {
+            accounts: vec![Account {
+                id: "gh".into(),
+                label: "l".into(),
+                provider: crate::model::ProviderKind::Github,
+                base_url: server.uri(),
+                identity: crate::model::Identity {
+                    username: "u".into(),
+                    name: None,
+                    email: None,
+                },
+            }],
+            monitored: vec![crate::model::MonitoredProject {
+                account_id: "gh".into(),
+                project_id: 7,
+                name: "web-app".into(),
+                web_url: "http://x".into(),
+                remote_ref: Some("acme/web-app".into()),
+            }],
+            ..Config::default()
+        };
+
+        let mut state = PollState::default();
+        let first = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        assert!(first.is_empty(), "first poll baselines, emits nothing");
+        // The run was fetched, parsed and status-mapped through GithubProvider.
+        assert_eq!(state.aggregate_status(), Some(PipelineStatus::Failed));
+    }
 
     fn pipeline(id: u64, status: PipelineStatus) -> Pipeline {
         Pipeline {
@@ -519,6 +575,7 @@ mod tests {
                 project_id: 1,
                 name: "p1".into(),
                 web_url: "u".into(),
+                remote_ref: None,
             }],
             rules: crate::model::NotificationRules {
                 on_start: true,
@@ -568,12 +625,14 @@ mod tests {
                     project_id: 1,
                     name: "p1".into(),
                     web_url: "u".into(),
+                    remote_ref: None,
                 },
                 crate::model::MonitoredProject {
                     account_id: "acct".into(),
                     project_id: 2,
                     name: "p2".into(),
                     web_url: "u".into(),
+                    remote_ref: None,
                 },
             ],
             ..Config::default()

@@ -47,6 +47,31 @@ impl PipelineStatus {
         }
     }
 
+    /// Map a GitHub Actions workflow run/job onto the normalized status.
+    ///
+    /// GitHub carries an in-flight `status` (`queued`, `in_progress`, `completed`, plus the
+    /// newer `requested`/`waiting`/`pending`) and, once `completed`, a separate `conclusion`
+    /// (`success`, `failure`, `cancelled`, `skipped`, `timed_out`, `action_required`,
+    /// `neutral`, `stale`, `startup_failure`). When a conclusion is present it is authoritative;
+    /// otherwise the run is still in flight and the status drives the result.
+    pub fn from_github(status: &str, conclusion: Option<&str>) -> Self {
+        match conclusion {
+            Some(c) => match c {
+                "success" => PipelineStatus::Success,
+                "failure" | "timed_out" | "startup_failure" => PipelineStatus::Failed,
+                "cancelled" => PipelineStatus::Canceled,
+                "skipped" => PipelineStatus::Skipped,
+                "action_required" => PipelineStatus::Manual,
+                _ => PipelineStatus::Other,
+            },
+            None => match status {
+                "in_progress" => PipelineStatus::Running,
+                "queued" | "requested" | "waiting" | "pending" => PipelineStatus::Pending,
+                _ => PipelineStatus::Other,
+            },
+        }
+    }
+
     /// Ranking for the aggregate tray icon: a higher value wins. Failed outranks Running,
     /// which outranks pending-like states, which outrank settled/neutral states.
     pub fn severity(&self) -> u8 {
@@ -107,6 +132,7 @@ pub struct Job {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     Gitlab,
+    Github,
 }
 
 /// The authenticated identity resolved when a token is validated. Never contains the token.
@@ -136,6 +162,11 @@ pub struct MonitoredProject {
     pub project_id: u64,
     pub name: String,
     pub web_url: String,
+    /// Provider-specific project ADDRESS used when `project_id` is not the API address.
+    /// `Some("owner/repo")` for GitHub; `None` for GitLab (which addresses by `project_id`).
+    /// Not a git ref (see `Pipeline::ref_`). No `serde(default)`: pre-beta, so a config written
+    /// before this field fails to load and resets to defaults rather than being migrated.
+    pub remote_ref: Option<String>,
 }
 
 /// Global notification preferences (v1: one set applies to all monitored projects).
@@ -223,6 +254,73 @@ pub fn clamp_interval(secs: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_github_maps_status_and_conclusion() {
+        // Completed runs map by conclusion.
+        assert_eq!(
+            PipelineStatus::from_github("completed", Some("success")),
+            PipelineStatus::Success
+        );
+        assert_eq!(
+            PipelineStatus::from_github("completed", Some("failure")),
+            PipelineStatus::Failed
+        );
+        for failed in ["failure", "timed_out", "startup_failure"] {
+            assert_eq!(
+                PipelineStatus::from_github("completed", Some(failed)),
+                PipelineStatus::Failed,
+                "{failed} should map to Failed"
+            );
+        }
+        assert_eq!(
+            PipelineStatus::from_github("completed", Some("cancelled")),
+            PipelineStatus::Canceled
+        );
+        assert_eq!(
+            PipelineStatus::from_github("completed", Some("skipped")),
+            PipelineStatus::Skipped
+        );
+        assert_eq!(
+            PipelineStatus::from_github("completed", Some("action_required")),
+            PipelineStatus::Manual
+        );
+        for other in ["neutral", "stale", "something_new"] {
+            assert_eq!(
+                PipelineStatus::from_github("completed", Some(other)),
+                PipelineStatus::Other,
+                "{other} conclusion should map to Other"
+            );
+        }
+        // In-flight runs (no conclusion yet) map by status.
+        assert_eq!(
+            PipelineStatus::from_github("in_progress", None),
+            PipelineStatus::Running
+        );
+        for pending in ["queued", "requested", "waiting", "pending"] {
+            assert_eq!(
+                PipelineStatus::from_github(pending, None),
+                PipelineStatus::Pending,
+                "{pending} should map to Pending"
+            );
+        }
+        assert_eq!(
+            PipelineStatus::from_github("something_new", None),
+            PipelineStatus::Other
+        );
+    }
+
+    #[test]
+    fn provider_kind_github_serializes_to_github() {
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::Github).unwrap(),
+            "\"github\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"github\"").unwrap(),
+            ProviderKind::Github
+        );
+    }
 
     #[test]
     fn from_gitlab_maps_all_documented_statuses() {

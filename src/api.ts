@@ -7,6 +7,7 @@ import type {
   Identity,
   MonitoredProject,
   NotificationRules,
+  ProviderKind,
 } from "./types";
 
 // Tauri v2 maps camelCase JS keys to snake_case Rust parameters automatically.
@@ -30,6 +31,9 @@ const previewEmpty = () => previewParam() === "empty";
 // `?preview=stress` exercises the hardening edge cases: very long names, deep namespace paths, a
 // group with many projects, and a second account whose discovery fails (per-account error + retry).
 const previewStress = () => previewParam() === "stress";
+// `?preview=github` exercises the GitHub provider path: a GitHub account whose discovered repos
+// carry `remote_ref` (owner/repo), so the provider selector and remote_ref toggle flow are reviewable.
+const previewGithub = () => previewParam() === "github";
 
 const FIXTURE_ACCOUNT: Account = {
   id: "acc-1",
@@ -158,10 +162,56 @@ const STRESS_MONITORED: MonitoredProject[] = [
   }),
 ];
 
-export const addAccount = (label: string, baseUrl: string, token: string): Promise<Identity> =>
-  PREVIEW
-    ? Promise.resolve(FIXTURE_ACCOUNT.identity)
-    : invoke("add_account", { label, baseUrl, token });
+// GitHub preview fixtures (dev only, `?preview=github`). Repos carry `remote_ref` so the monitored
+// selection persists the owner/repo slug, mirroring the real GitHub discovery shape.
+const GITHUB_FIXTURE_ACCOUNT: Account = {
+  id: "gh-1",
+  label: "GitHub",
+  provider: "github",
+  base_url: "https://github.com",
+  identity: { username: "octocat", name: "The Octocat", email: null },
+};
+const GITHUB_FIXTURE_PROJECTS: DiscoveredProject[] = [
+  {
+    id: 2001,
+    name: "web-app",
+    web_url: "https://github.com/acme/web-app",
+    group: "acme",
+    remote_ref: "acme/web-app",
+  },
+  {
+    id: 2002,
+    name: "api",
+    web_url: "https://github.com/acme/api",
+    group: "acme",
+    remote_ref: "acme/api",
+  },
+  {
+    id: 2003,
+    name: "dotfiles",
+    web_url: "https://github.com/octocat/dotfiles",
+    group: "octocat",
+    remote_ref: "octocat/dotfiles",
+  },
+];
+
+export const addAccount = (
+  provider: ProviderKind,
+  label: string,
+  baseUrl: string,
+  token: string,
+): Promise<Identity> => {
+  if (PREVIEW) return Promise.resolve(FIXTURE_ACCOUNT.identity);
+  // Typed args object so a dropped key (e.g. `provider`) is a compile error. The loosely-typed
+  // invoke() second argument and the fixture-mode preview would otherwise hide the omission.
+  const args: { provider: ProviderKind; label: string; baseUrl: string; token: string } = {
+    provider,
+    label,
+    baseUrl,
+    token,
+  };
+  return invoke("add_account", args);
+};
 
 export const removeAccount = (id: string): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("remove_account", { id });
@@ -170,6 +220,7 @@ export const listAccounts = (): Promise<Account[]> => {
   if (!PREVIEW) return invoke("list_accounts");
   if (previewEmpty()) return Promise.resolve([]);
   if (previewStress()) return Promise.resolve(STRESS_ACCOUNTS);
+  if (previewGithub()) return Promise.resolve([GITHUB_FIXTURE_ACCOUNT]);
   return Promise.resolve([FIXTURE_ACCOUNT]);
 };
 
@@ -184,14 +235,28 @@ export const listDiscoveredProjects = (accountId: string): Promise<DiscoveredPro
     }
     return Promise.resolve(STRESS_PROJECTS);
   }
+  if (previewGithub()) return Promise.resolve(GITHUB_FIXTURE_PROJECTS);
   return Promise.resolve(FIXTURE_PROJECTS);
 };
 
 export const getConfig = (): Promise<Config> =>
   PREVIEW
     ? Promise.resolve({
-        accounts: previewEmpty() ? [] : previewStress() ? STRESS_ACCOUNTS : [FIXTURE_ACCOUNT],
-        monitored: previewEmpty() ? [] : previewStress() ? STRESS_MONITORED : FIXTURE_MONITORED,
+        accounts: previewEmpty()
+          ? []
+          : previewStress()
+            ? STRESS_ACCOUNTS
+            : previewGithub()
+              ? [GITHUB_FIXTURE_ACCOUNT]
+              : [FIXTURE_ACCOUNT],
+        // GitHub preview starts with nothing monitored so the remote_ref toggle flow is reviewable.
+        monitored: previewEmpty()
+          ? []
+          : previewStress()
+            ? STRESS_MONITORED
+            : previewGithub()
+              ? []
+              : FIXTURE_MONITORED,
         rules: {
           on_start: false,
           on_success: true,
@@ -207,7 +272,13 @@ export const getConfig = (): Promise<Config> =>
 
 export const getMonitoredProjects = (): Promise<MonitoredProject[]> =>
   PREVIEW
-    ? Promise.resolve(previewEmpty() ? [] : previewStress() ? STRESS_MONITORED : FIXTURE_MONITORED)
+    ? Promise.resolve(
+        previewEmpty() || previewGithub()
+          ? []
+          : previewStress()
+            ? STRESS_MONITORED
+            : FIXTURE_MONITORED,
+      )
     : invoke("get_monitored_projects");
 
 export const setMonitoredProjects = (
