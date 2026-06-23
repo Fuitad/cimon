@@ -37,6 +37,11 @@ _version: 2
 "tray.no_projects":
   en: "No projects monitored"
   fr: "Aucun projet surveillé"
+# Appended to a project row when its most recent poll failed: the shown status/branch are the
+# last known good values, not current.
+"tray.offline":
+  en: "offline"
+  fr: "hors ligne"
 
 # Shown once, the first time the app starts hidden, so the user knows where to find it (macOS
 # can also hide the menu bar icon itself when the bar is full).
