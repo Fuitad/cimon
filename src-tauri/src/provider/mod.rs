@@ -4,6 +4,8 @@
 //! alongside the numeric `project_id`, so a provider addressed by something other than a
 //! numeric id (GitHub's `owner/repo`) fits without changing the shared key.
 
+use std::time::Duration;
+
 use serde::Serialize;
 
 use crate::model::{Identity, Job, Pipeline};
@@ -11,14 +13,41 @@ use crate::model::{Identity, Job, Pipeline};
 pub mod github;
 pub mod gitlab;
 
+/// Connect-phase timeout: bound how long establishing a TCP/TLS connection may take before the
+/// request is abandoned (a host that black-holes packets, an unreachable VPN, a restarting
+/// self-hosted instance).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Whole-request timeout: bound the total time for connect + send + response. This is the one
+/// that catches a connection that was established and then went dead (e.g. a laptop sleep/wake
+/// severs an in-flight socket), which a connect timeout alone would not.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Build the shared HTTP client used for all provider requests.
 ///
 /// Redirects are disabled outright: a token-bearing request must never be transparently
 /// re-sent to a different host (defense in depth on top of base-URL validation).
+///
+/// Both timeouts are mandatory, not optional hardening: the poller awaits each provider request
+/// sequentially, so a SINGLE request with no timeout that stalls (dead socket after sleep/wake,
+/// a VPN blip, a black-holing host) blocks the entire poll loop forever. The tray then freezes
+/// at its last status and no further transitions are ever detected, so notifications silently
+/// stop until the app is restarted. A bounded request fails, is skipped for that tick, and the
+/// loop recovers on the next one.
 pub fn build_http_client() -> reqwest::Client {
+    build_http_client_with_timeouts(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+}
+
+/// [`build_http_client`] with explicit timeouts, so tests can drive short bounds without waiting
+/// on the production values.
+pub(crate) fn build_http_client_with_timeouts(
+    connect: Duration,
+    request: Duration,
+) -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("CIMon/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(connect)
+        .timeout(request)
         .build()
         .expect("failed to build HTTP client")
 }
@@ -154,5 +183,42 @@ impl Provider for AnyProvider {
             AnyProvider::Gitlab(p) => p.list_jobs(project_id, remote_ref, pipeline_id).await,
             AnyProvider::Github(p) => p.list_jobs(project_id, remote_ref, pipeline_id).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Regression guard for the "tray stuck, notifications silently stop" bug: a request to a
+    /// server that accepts the connection but never answers MUST abort at the request timeout
+    /// instead of hanging. Without the timeout this `await` never returns, which freezes the
+    /// sequential poll loop permanently. The mock holds the response for far longer than the
+    /// client's bound, so a passing test proves the client gave up on its own.
+    #[tokio::test]
+    async fn request_aborts_on_timeout_instead_of_hanging() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/stall"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+
+        let client =
+            build_http_client_with_timeouts(Duration::from_millis(500), Duration::from_millis(500));
+        let start = Instant::now();
+        let result = client.get(format!("{}/stall", server.uri())).send().await;
+
+        assert!(
+            result.is_err(),
+            "a stalled request must error at the timeout, not return a response"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the request must give up at its 500ms bound, not wait out the 30s server delay"
+        );
     }
 }
