@@ -1,11 +1,14 @@
 //! Provider abstraction: each CI provider implements [`Provider`], mapping its API onto
-//! the normalized [`crate::model`] types. GitLab is the first implementation (Task 3);
-//! GitHub will be a second, with no change required downstream of this trait.
+//! the normalized [`crate::model`] types. GitLab is the first implementation, GitHub the
+//! second. The trait carries an optional `remote_ref` (a provider-specific project address)
+//! alongside the numeric `project_id`, so a provider addressed by something other than a
+//! numeric id (GitHub's `owner/repo`) fits without changing the shared key.
 
 use serde::Serialize;
 
 use crate::model::{Identity, Job, Pipeline};
 
+pub mod github;
 pub mod gitlab;
 
 /// Build the shared HTTP client used for all provider requests.
@@ -55,6 +58,9 @@ pub struct DiscoveredProject {
     /// Owning group / namespace path (e.g. `acme/backend`), used to group the selection list.
     /// Empty when the provider reports no namespace.
     pub group: String,
+    /// Provider-specific project ADDRESS carried into the monitored set (GitHub `owner/repo`).
+    /// `None` for GitLab, which addresses projects by `id`. Not a git ref.
+    pub remote_ref: Option<String>,
 }
 
 /// The read-only operations CIMon needs from a CI provider.
@@ -69,10 +75,84 @@ pub trait Provider {
     /// List the projects the token can access (for the monitor-selection UI).
     async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError>;
 
-    /// List recent pipelines for a project, newest first.
-    async fn list_pipelines(&self, project_id: u64) -> Result<Vec<Pipeline>, ProviderError>;
+    /// List recent pipelines for a project, newest first. `remote_ref` is the provider-specific
+    /// project address (GitHub `owner/repo`); `None` for providers that address by `project_id`.
+    async fn list_pipelines(
+        &self,
+        project_id: u64,
+        remote_ref: Option<&str>,
+    ) -> Result<Vec<Pipeline>, ProviderError>;
 
-    /// List the jobs of a pipeline (for job-level notifications).
-    async fn list_jobs(&self, project_id: u64, pipeline_id: u64)
-        -> Result<Vec<Job>, ProviderError>;
+    /// List the jobs of a pipeline (for job-level notifications). `remote_ref` as above.
+    async fn list_jobs(
+        &self,
+        project_id: u64,
+        remote_ref: Option<&str>,
+        pipeline_id: u64,
+    ) -> Result<Vec<Job>, ProviderError>;
+}
+
+/// Dispatches the [`Provider`] trait to the concrete provider for an account's kind, so the
+/// command and poller layers stay provider-agnostic (they hold an `AnyProvider`, not a concrete
+/// type). This is the "dispatching enum" the trait doc refers to.
+pub enum AnyProvider {
+    Gitlab(gitlab::GitlabProvider),
+    Github(github::GithubProvider),
+}
+
+/// Build the provider for an account's kind, bound to its base URL and token.
+pub fn build_provider(
+    kind: crate::model::ProviderKind,
+    client: reqwest::Client,
+    base_url: impl Into<String>,
+    token: impl Into<String>,
+) -> AnyProvider {
+    use crate::model::ProviderKind;
+    match kind {
+        ProviderKind::Gitlab => {
+            AnyProvider::Gitlab(gitlab::GitlabProvider::new(client, base_url, token))
+        }
+        ProviderKind::Github => {
+            AnyProvider::Github(github::GithubProvider::new(client, base_url, token))
+        }
+    }
+}
+
+impl Provider for AnyProvider {
+    async fn validate_token(&self) -> Result<Identity, ProviderError> {
+        match self {
+            AnyProvider::Gitlab(p) => p.validate_token().await,
+            AnyProvider::Github(p) => p.validate_token().await,
+        }
+    }
+
+    async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError> {
+        match self {
+            AnyProvider::Gitlab(p) => p.list_projects().await,
+            AnyProvider::Github(p) => p.list_projects().await,
+        }
+    }
+
+    async fn list_pipelines(
+        &self,
+        project_id: u64,
+        remote_ref: Option<&str>,
+    ) -> Result<Vec<Pipeline>, ProviderError> {
+        match self {
+            AnyProvider::Gitlab(p) => p.list_pipelines(project_id, remote_ref).await,
+            AnyProvider::Github(p) => p.list_pipelines(project_id, remote_ref).await,
+        }
+    }
+
+    async fn list_jobs(
+        &self,
+        project_id: u64,
+        remote_ref: Option<&str>,
+        pipeline_id: u64,
+    ) -> Result<Vec<Job>, ProviderError> {
+        match self {
+            AnyProvider::Gitlab(p) => p.list_jobs(project_id, remote_ref, pipeline_id).await,
+            AnyProvider::Github(p) => p.list_jobs(project_id, remote_ref, pipeline_id).await,
+        }
+    }
 }

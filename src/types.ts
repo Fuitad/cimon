@@ -1,6 +1,6 @@
 // TypeScript mirrors of the Rust model (src-tauri/src/model.rs) and command errors.
 
-export type ProviderKind = "gitlab";
+export type ProviderKind = "gitlab" | "github";
 
 export interface Identity {
   username: string;
@@ -21,6 +21,8 @@ export interface MonitoredProject {
   project_id: number;
   name: string;
   web_url: string;
+  /** Provider-specific project address ("owner/repo") for GitHub; null/absent for GitLab. */
+  remote_ref?: string | null;
 }
 
 export interface NotificationRules {
@@ -48,6 +50,8 @@ export interface DiscoveredProject {
   web_url: string;
   /** Owning group / namespace path (e.g. "acme/backend"); empty when the provider reports none. */
   group: string;
+  /** Provider-specific project address ("owner/repo") for GitHub; null/absent for GitLab. */
+  remote_ref?: string | null;
 }
 
 export type CommandErrorKind =

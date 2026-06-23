@@ -152,6 +152,8 @@ impl Provider for GitlabProvider {
                 name: p.name,
                 web_url: p.web_url,
                 group: p.namespace.map(|n| n.full_path).unwrap_or_default(),
+                // GitLab addresses projects by numeric id, so no provider-specific ref.
+                remote_ref: None,
             }));
 
             if has_next_header {
@@ -176,7 +178,11 @@ impl Provider for GitlabProvider {
         Ok(out)
     }
 
-    async fn list_pipelines(&self, project_id: u64) -> Result<Vec<Pipeline>, ProviderError> {
+    async fn list_pipelines(
+        &self,
+        project_id: u64,
+        _remote_ref: Option<&str>, // GitLab addresses by project_id; the ref is unused.
+    ) -> Result<Vec<Pipeline>, ProviderError> {
         let resp = self
             .get(&format!(
                 "/projects/{project_id}/pipelines?per_page=20&order_by=updated_at&sort=desc"
@@ -203,6 +209,7 @@ impl Provider for GitlabProvider {
     async fn list_jobs(
         &self,
         project_id: u64,
+        _remote_ref: Option<&str>, // GitLab addresses by project_id; the ref is unused.
         pipeline_id: u64,
     ) -> Result<Vec<Job>, ProviderError> {
         // per_page=100 covers any realistic pipeline in a single page; pipelines with more than
@@ -323,7 +330,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let pipes = provider(&server).list_pipelines(7).await.unwrap();
+        let pipes = provider(&server).list_pipelines(7, None).await.unwrap();
         assert_eq!(pipes.len(), 1);
         assert_eq!(pipes[0].status, PipelineStatus::Failed);
         assert_eq!(pipes[0].project_id, 7);
@@ -343,7 +350,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let jobs = provider(&server).list_jobs(7, 42).await.unwrap();
+        let jobs = provider(&server).list_jobs(7, None, 42).await.unwrap();
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].name, "build");
         assert_eq!(jobs[0].status, PipelineStatus::Success);
@@ -361,7 +368,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = provider(&server).list_pipelines(7).await.unwrap_err();
+        let err = provider(&server).list_pipelines(7, None).await.unwrap_err();
         assert_eq!(err, ProviderError::Http(500));
     }
 }

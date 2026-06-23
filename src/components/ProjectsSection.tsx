@@ -21,6 +21,17 @@ interface ProjectGroup {
 
 const monitoredKey = (accountId: string, projectId: number) => `${accountId}::${projectId}`;
 
+/** Build a MonitoredProject from a discovered one, carrying `remote_ref` through in one place so
+ *  the GitHub owner/repo slug is provably persisted (forgetting it on an optional field would
+ *  otherwise compile and pass the fixture preview). GitLab's `remote_ref` is null. */
+const toMonitored = (accountId: string, p: DiscoveredProject): MonitoredProject => ({
+  account_id: accountId,
+  project_id: p.id,
+  name: p.name,
+  web_url: p.web_url,
+  remote_ref: p.remote_ref ?? null,
+});
+
 /** Per-account, searchable tree of discovered projects, grouped by their GitLab group/namespace,
  *  collapsible per group (default collapsed), with monitor toggles (account-scoped). */
 function ProjectsSection({ accounts }: ProjectsSectionProps) {
@@ -152,10 +163,7 @@ function ProjectsSection({ accounts }: ProjectsSectionProps) {
     commit(account.id, (current) =>
       current.some((m) => m.project_id === proj.id)
         ? current.filter((m) => m.project_id !== proj.id)
-        : [
-            ...current,
-            { account_id: account.id, project_id: proj.id, name: proj.name, web_url: proj.web_url },
-          ],
+        : [...current, toMonitored(account.id, proj)],
     );
 
   const toggleGroup = (account: Account, group: ProjectGroup, turnOn: boolean) =>
@@ -167,12 +175,7 @@ function ProjectsSection({ accounts }: ProjectsSectionProps) {
       const have = new Set(current.map((m) => m.project_id));
       const additions = group.projects
         .filter((p) => !have.has(p.id))
-        .map((p) => ({
-          account_id: account.id,
-          project_id: p.id,
-          name: p.name,
-          web_url: p.web_url,
-        }));
+        .map((p) => toMonitored(account.id, p));
       return [...current, ...additions];
     });
 
