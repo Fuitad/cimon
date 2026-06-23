@@ -20,7 +20,8 @@
   --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
   --focus-ring: color-mix(in oklch, var(--accent) 45%, transparent);
 
-  /* Status (mirrors src-tauri/src/tray.rs::status_color) */
+  /* Status: same hues as src-tauri/src/tray.rs::status_color (the vibrant pipeline palette),
+     tuned here for window-surface contrast rather than byte-identical. */
   --status-ok: oklch(0.6 0.14 150);
 
   --danger: oklch(0.55 0.17 25);
