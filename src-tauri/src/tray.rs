@@ -17,19 +17,23 @@ const SETTINGS_ID: &str = "cimon-settings";
 const QUIT_ID: &str = "cimon-quit";
 const TRAY_ID: &str = "cimon-tray";
 
-/// Shared RGBA status palette. The active-state colors are used by BOTH the aggregate tray icon
-/// ([`status_color`]) and the per-row dots ([`menu_status_color`]); the two differ only in their
-/// fallback (idle/settled) handling, so the shared colors live here to avoid drift.
-const COLOR_RED: [u8; 4] = [0xD4, 0x33, 0x33, 0xFF]; // failed
-const COLOR_BLUE: [u8; 4] = [0x33, 0x77, 0xD4, 0xFF]; // running
-const COLOR_AMBER: [u8; 4] = [0xD4, 0xA3, 0x33, 0xFF]; // pending / manual
-const COLOR_GREEN: [u8; 4] = [0x33, 0xA8, 0x53, 0xFF]; // success / settled
+/// Shared RGBA status palette: vibrant, high-chroma colors (OKLCH-derived) chosen so the aggregate
+/// menu-bar icon stays legible on any background, including a translucent colored menu bar where
+/// the older muted tones faded out. The active-state colors are used by BOTH the aggregate tray
+/// icon ([`status_color`], which frames them with a dark keyline) and the per-row dots
+/// ([`menu_status_color`]); the two differ only in their fallback (idle/settled) handling, so the
+/// shared colors live here to avoid drift.
+const COLOR_RED: [u8; 4] = [0xFA, 0x2C, 0x2E, 0xFF]; // failed   (oklch 0.635 0.237 27)
+const COLOR_BLUE: [u8; 4] = [0x00, 0x95, 0xFF, 0xFF]; // running  (oklch 0.66 0.19 250)
+const COLOR_AMBER: [u8; 4] = [0xFA, 0xAD, 0x00, 0xFF]; // pending  (oklch 0.80 0.175 78)
+const COLOR_GREEN: [u8; 4] = [0x00, 0xCD, 0x5E, 0xFF]; // success  (oklch 0.74 0.205 150)
 const COLOR_GREY: [u8; 4] = [0x9A, 0x9A, 0x9A, 0xFF]; // unknown / not-yet-polled (rows only)
 const COLOR_WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF]; // idle (aggregate icon only)
 
 /// RGBA color for the aggregate tray icon. `None` = idle (nothing tracked); idle is white and
 /// drawn as a macOS template (see `set_status`) so the menu bar keeps it visible on any
-/// background. Placeholder palette for Milestone 1; final iconography is the `impeccable` pass.
+/// background. Active states are the vibrant shared palette that [`logo_icon`] frames with a dark
+/// keyline so the glyph reads on a dark, light, or translucent colored menu bar.
 pub fn status_color(status: Option<PipelineStatus>) -> [u8; 4] {
     match status {
         Some(PipelineStatus::Failed) => COLOR_RED,
@@ -44,6 +48,14 @@ pub fn status_color(status: Option<PipelineStatus>) -> [u8; 4] {
 /// chosen for crisp downscaling on Retina/2-3x displays.
 const ICON_N: u32 = 64;
 
+/// Dark keyline drawn around the colored aggregate glyph so its silhouette stays legible on any
+/// menu-bar background. `OUTLINE_STROKE` is the rim width in the 256-unit design space; the color
+/// is a near-black graphite that blends into a dark bar yet separates the glyph on a light or
+/// translucent colored one. Idle renders without it: it is a template image macOS recolors for
+/// contrast instead.
+const OUTLINE_STROKE: f64 = 15.0;
+const OUTLINE_COLOR: [u8; 3] = [0x12, 0x16, 0x18];
+
 /// Anti-aliased coverage (0.0..=1.0) of a filled disc at point `p`, centered at `c` with radius
 /// `r`, where `aa` is the width (in the same units as `p`) of the soft edge band. Shared by the
 /// logo glyph and the per-row status dots so both anti-alias the disc edge identically.
@@ -54,26 +66,48 @@ fn disc_coverage(p: (f64, f64), c: (f64, f64), r: f64, aa: f64) -> f64 {
 
 /// Draw the CIMon logo glyph (outer ring + central orb + a three-dot pipeline motif) filled with
 /// `color`, anti-aliased on a transparent background. Geometry mirrors the app icon
-/// (`icons/*.png`) in its 256-unit design space. Active states are colored glyphs that carry the
-/// aggregate status by tint; the idle state is white and flagged as a macOS template by the
-/// caller so the system recolors it for the current menu bar. A Milestone-1 rendering, pending
-/// the final iconography pass.
-fn logo_icon(color: [u8; 4]) -> tauri::image::Image<'static> {
+/// (`icons/*.png`) in its 256-unit design space, with a touch more mass than the icon's hairlines
+/// so the ring and dots survive the menu bar's ~18pt downscale. When `outlined`, the glyph is
+/// framed with a dark keyline ([`OUTLINE_COLOR`]) so its silhouette and the vibrant fill stay
+/// legible on a dark, light, or translucent colored menu bar; this is the internal contrast the
+/// flat app icon gets from its dark ring around the bright orb. Active (colored) states pass
+/// `outlined = true`; the idle state is white, drawn without the keyline, and flagged as a macOS
+/// template by the caller so the system recolors it for the current menu bar.
+fn logo_icon(color: [u8; 4], outlined: bool) -> tauri::image::Image<'static> {
     const N: u32 = ICON_N;
     // One output pixel expressed in the 256-unit design space; the anti-alias band width.
     let aa = 256.0 / N as f64;
 
     // Geometry in the 256-unit design space.
     let center = (128.0, 128.0);
-    let (ring_outer, ring_inner) = (104.0, 92.0);
-    let (orb_c, orb_r) = ((128.0, 116.0), 30.0);
+    let (ring_outer, ring_inner) = (108.0, 86.0);
+    let (orb_c, orb_r) = ((128.0, 116.0), 34.0);
     let pipe_y = 190.0;
     let dot_xs = [78.0, 128.0, 178.0];
-    let dot_r = 13.0;
-    let connector_half = 4.0;
+    let dot_r = 16.0;
+    let connector_half = 5.0;
 
-    // Coverage of one filled disk at point p (1.0 inside, 0.0 outside, AA across the edge).
-    let disk = |p: (f64, f64), c: (f64, f64), r: f64| -> f64 { disc_coverage(p, c, r, aa) };
+    // Coverage (0.0..=1.0) of the whole glyph at point `p`, with every primitive grown by `grow`
+    // design-space units. `grow = 0.0` is the fill silhouette; `grow = OUTLINE_STROKE` is the
+    // dilated silhouette whose extra band becomes the dark keyline.
+    let coverage_at = |p: (f64, f64), grow: f64| -> f64 {
+        // Ring = inside the (grown) outer edge AND outside the (shrunk) inner hole.
+        let d_center = ((p.0 - center.0).powi(2) + (p.1 - center.1).powi(2)).sqrt();
+        let ring = (((ring_outer + grow - d_center) / aa + 0.5).clamp(0.0, 1.0))
+            .min(((d_center - (ring_inner - grow)) / aa + 0.5).clamp(0.0, 1.0));
+        let orb = disc_coverage(p, orb_c, orb_r + grow, aa);
+        // Pipeline: horizontal connector segment plus three dots.
+        let connector = if p.0 >= dot_xs[0] - grow && p.0 <= dot_xs[2] + grow {
+            ((connector_half + grow - (p.1 - pipe_y).abs()) / aa + 0.5).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let dots = dot_xs
+            .iter()
+            .map(|&x| disc_coverage(p, (x, pipe_y), dot_r + grow, aa))
+            .fold(0.0_f64, f64::max);
+        ring.max(orb).max(connector).max(dots)
+    };
 
     let mut rgba = Vec::with_capacity((N * N * 4) as usize);
     for j in 0..N {
@@ -82,28 +116,34 @@ fn logo_icon(color: [u8; 4]) -> tauri::image::Image<'static> {
                 (i as f64 + 0.5) * 256.0 / N as f64,
                 (j as f64 + 0.5) * 256.0 / N as f64,
             );
-            // Ring = inside the outer edge AND outside the inner hole.
-            let d_center = ((p.0 - center.0).powi(2) + (p.1 - center.1).powi(2)).sqrt();
-            let ring = (((ring_outer - d_center) / aa + 0.5).clamp(0.0, 1.0))
-                .min(((d_center - ring_inner) / aa + 0.5).clamp(0.0, 1.0));
-            // Orb.
-            let orb = disk(p, orb_c, orb_r);
-            // Pipeline: horizontal connector segment plus three dots.
-            let connector = if p.0 >= dot_xs[0] && p.0 <= dot_xs[2] {
-                ((connector_half - (p.1 - pipe_y).abs()) / aa + 0.5).clamp(0.0, 1.0)
+            let fill = coverage_at(p, 0.0);
+            let (r, g, b, a) = if outlined {
+                // Composite the fill over the dark keyline over transparent (straight alpha): the
+                // band the dilated silhouette adds beyond the fill is rendered in OUTLINE_COLOR.
+                let outer = coverage_at(p, OUTLINE_STROKE);
+                let out_a = fill + outer * (1.0 - fill);
+                let blend = |fill_c: u8, key_c: u8| -> u8 {
+                    if out_a <= 0.0 {
+                        0
+                    } else {
+                        ((fill_c as f64 * fill + key_c as f64 * outer * (1.0 - fill)) / out_a)
+                            .round()
+                            .clamp(0.0, 255.0) as u8
+                    }
+                };
+                (
+                    blend(color[0], OUTLINE_COLOR[0]),
+                    blend(color[1], OUTLINE_COLOR[1]),
+                    blend(color[2], OUTLINE_COLOR[2]),
+                    (out_a * 255.0).round() as u8,
+                )
             } else {
-                0.0
+                (color[0], color[1], color[2], (fill * 255.0).round() as u8)
             };
-            let dots = dot_xs
-                .iter()
-                .map(|&x| disk(p, (x, pipe_y), dot_r))
-                .fold(0.0_f64, f64::max);
-
-            let coverage = ring.max(orb).max(connector).max(dots);
-            rgba.push(color[0]);
-            rgba.push(color[1]);
-            rgba.push(color[2]);
-            rgba.push((coverage * 255.0).round() as u8);
+            rgba.push(r);
+            rgba.push(g);
+            rgba.push(b);
+            rgba.push(a);
         }
     }
     tauri::image::Image::new_owned(rgba, N, N)
@@ -239,7 +279,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     let menu = build_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(logo_icon(status_color(None)))
+        .icon(logo_icon(status_color(None), false))
         // Starts idle: render the white glyph as a template so macOS keeps it visible (white on a
         // dark menu bar, dark on a light one) rather than a fixed colour that can vanish.
         .icon_as_template(true)
@@ -259,10 +299,11 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 
 /// Update the tray icon to reflect the aggregate worst status. Call from the poller (Task 11).
 pub fn set_status(tray: &TrayIcon, status: Option<PipelineStatus>) {
-    let _ = tray.set_icon(Some(logo_icon(status_color(status))));
-    // Idle has no status colour to convey, so render it as a template image: macOS draws it in
-    // the menu bar's own colour (white on a dark bar, dark on a light one) so it stays visible.
-    // Active states keep their colour to convey status.
+    // Active states render as vibrant, dark-keyline glyphs (their colour conveys status). Idle has
+    // no status to convey, so it renders without the keyline and as a template image: macOS draws
+    // it in the menu bar's own colour (white on a dark bar, dark on a light one) so it stays
+    // visible on any background.
+    let _ = tray.set_icon(Some(logo_icon(status_color(status), status.is_some())));
     let _ = tray.set_icon_as_template(status.is_none());
 }
 
@@ -290,9 +331,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn logo_icon_is_tinted_glyph_on_transparent_background() {
+    fn logo_icon_is_tinted_glyph_with_dark_keyline() {
         let red = status_color(Some(PipelineStatus::Failed));
-        let img = logo_icon(red);
+        let img = logo_icon(red, true);
         assert_eq!(img.width(), ICON_N);
         assert_eq!(img.height(), ICON_N);
         let rgba = img.rgba();
@@ -300,15 +341,37 @@ mod tests {
             let i = ((y * ICON_N + x) * 4) as usize;
             [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
         };
-        // Center sits inside the orb: opaque and carrying the status color.
+        // Center sits inside the orb: opaque and carrying the pure status color (no keyline here).
         let c = px(ICON_N / 2, (116 * ICON_N) / 256);
         assert_eq!([c[0], c[1], c[2]], [red[0], red[1], red[2]]);
         assert!(
             c[3] > 200,
             "glyph center should be (near) opaque, got {c:?}"
         );
+        // Just past the ring's outer edge sits the keyline band: opaque and dark. This internal
+        // contrast is what keeps the glyph legible on a colored menu bar.
+        let rim = px(ICON_N / 2, 3);
+        assert!(rim[3] > 200, "keyline band should be opaque, got {rim:?}");
+        assert!(
+            rim[0] < 70 && rim[1] < 70 && rim[2] < 70,
+            "keyline band should be the dark rim color, got {rim:?}"
+        );
         // A corner is outside the glyph: fully transparent.
         assert_eq!(px(0, 0)[3], 0, "corner should be transparent");
+    }
+
+    #[test]
+    fn idle_glyph_renders_without_a_keyline() {
+        // Idle is drawn flat (no keyline) and recolored by macOS as a template image, so the band
+        // that an outlined glyph fills with the dark rim must be transparent here.
+        let img = logo_icon(status_color(None), false);
+        let rgba = img.rgba();
+        let alpha = |x: u32, y: u32| rgba[((y * ICON_N + x) * 4 + 3) as usize];
+        assert_eq!(
+            alpha(ICON_N / 2, 3),
+            0,
+            "idle glyph must have no keyline band"
+        );
     }
 
     #[test]
