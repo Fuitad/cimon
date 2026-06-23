@@ -12,6 +12,18 @@ use crate::secrets::TokenStore;
 /// project id is only unique within its instance/account, hence the account in the key.
 pub type ProjectKey = (String, u64);
 
+/// A per-project status view for the tray rows: the latest pipeline's normalized status and its
+/// branch. Built from [`PollState`] and handed to the tray each poll tick so each monitored
+/// project can show a colored indicator plus its current branch and status word.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectStatusView {
+    pub status: PipelineStatus,
+    pub branch: String,
+    /// `true` when this project's most recent poll attempt FAILED: the status/branch are the last
+    /// known good values (kept so a transient blip doesn't blank the row), but no longer fresh.
+    pub stale: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionKind {
     Started,
@@ -47,11 +59,16 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
 pub struct PollState {
     /// Last-seen status per pipeline id, per project.
     seen: HashMap<ProjectKey, HashMap<u64, PipelineStatus>>,
-    /// Status of the most recent pipeline per project (drives the aggregate tray icon).
-    current: HashMap<ProjectKey, PipelineStatus>,
+    /// Most recent pipeline per project. Its status ranks the aggregate tray icon; its branch
+    /// (`ref_`) is shown on the project's tray row.
+    current: HashMap<ProjectKey, Pipeline>,
     /// Last-seen status per job id, per project. Only the currently-tracked (newest) pipeline's
     /// jobs are kept (pruned each tick), so this stays bounded to one pipeline's worth per project.
     seen_jobs: HashMap<ProjectKey, HashMap<u64, PipelineStatus>>,
+    /// Projects whose most recent poll attempt FAILED. They keep their last-known `current` entry
+    /// (resilient to transient blips and self-healing on the next good poll), but are flagged so
+    /// the tray can mark the row stale instead of showing old data as fresh.
+    stale: HashSet<ProjectKey>,
 }
 
 impl PollState {
@@ -69,7 +86,7 @@ impl PollState {
         // an empty list means the project has no current pipeline, so drop any stale entry.
         match latest.first() {
             Some(newest) => {
-                self.current.insert(key.clone(), newest.status);
+                self.current.insert(key.clone(), newest.clone());
             }
             None => {
                 self.current.remove(key);
@@ -164,7 +181,38 @@ impl PollState {
     /// Worst current status across all monitored projects, or `None` when nothing is tracked.
     /// Drives the tray icon (Failed outranks Running outranks settled states).
     pub fn aggregate_status(&self) -> Option<PipelineStatus> {
-        self.current.values().copied().max_by_key(|s| s.severity())
+        self.current
+            .values()
+            .map(|p| p.status)
+            .max_by_key(|s| s.severity())
+    }
+
+    /// Snapshot of each tracked project's latest status and branch, for the tray rows. Keyed by
+    /// the same [`ProjectKey`] the monitored set joins on, so the tray can look each project up.
+    pub fn project_statuses(&self) -> HashMap<ProjectKey, ProjectStatusView> {
+        self.current
+            .iter()
+            .map(|(k, p)| {
+                (
+                    k.clone(),
+                    ProjectStatusView {
+                        status: p.status,
+                        branch: p.ref_.clone(),
+                        stale: self.stale.contains(k),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Flag a project as stale (its most recent poll attempt failed). Its `current` entry is kept.
+    fn mark_stale(&mut self, key: &ProjectKey) {
+        self.stale.insert(key.clone());
+    }
+
+    /// Clear a project's stale flag after a successful poll.
+    fn mark_fresh(&mut self, key: &ProjectKey) {
+        self.stale.remove(key);
     }
 
     /// Drop tracked state for keys no longer in the monitored set, so an un-monitored project
@@ -173,6 +221,7 @@ impl PollState {
         self.seen.retain(|k, _| valid.contains(k));
         self.current.retain(|k, _| valid.contains(k));
         self.seen_jobs.retain(|k, _| valid.contains(k));
+        self.stale.retain(|k| valid.contains(k));
     }
 }
 
@@ -203,14 +252,22 @@ pub async fn poll_once(
             token.expose().to_string(),
         );
         for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
+            let key = (acct.id.clone(), mp.project_id);
             let pipelines = match provider
                 .list_pipelines(mp.project_id, mp.remote_ref.as_deref())
                 .await
             {
                 Ok(p) => p,
-                Err(_) => continue, // error isolation: skip this project this tick
+                Err(_) => {
+                    // Error isolation: skip this project this tick. Flag it stale so the tray
+                    // marks its retained last-known status as no longer fresh, instead of
+                    // showing it as current.
+                    state.mark_stale(&key);
+                    continue;
+                }
             };
-            let key = (acct.id.clone(), mp.project_id);
+            // A successful fetch: this project's status is fresh again.
+            state.mark_fresh(&key);
             let mut detected = state.detect(&key, &pipelines);
 
             // Job-level: fetch jobs only for the newest (most-recently-updated) pipeline, so
@@ -256,7 +313,7 @@ pub async fn run_poller<F, G>(
     mut on_aggregate: G,
 ) where
     F: FnMut(&[Transition]),
-    G: FnMut(Option<PipelineStatus>),
+    G: FnMut(Option<PipelineStatus>, &HashMap<ProjectKey, ProjectStatusView>),
 {
     let mut state = PollState::default();
     loop {
@@ -267,7 +324,7 @@ pub async fn run_poller<F, G>(
         if !transitions.is_empty() {
             on_transitions(&transitions);
         }
-        on_aggregate(state.aggregate_status());
+        on_aggregate(state.aggregate_status(), &state.project_statuses());
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
     }
 }
@@ -675,6 +732,103 @@ mod tests {
             tokens.reads(),
             0,
             "keychain must not be read when no projects are monitored"
+        );
+    }
+
+    #[test]
+    fn project_statuses_reports_status_and_branch_per_project() {
+        let mut s = PollState::default();
+        let mut p_a = pipeline(1, PipelineStatus::Running);
+        p_a.ref_ = "main".into();
+        let mut p_b = pipeline(2, PipelineStatus::Failed);
+        p_b.ref_ = "develop".into();
+        s.detect(&("acct".into(), 10), &[p_a]);
+        s.detect(&("acct".into(), 20), &[p_b]);
+
+        let snap = s.project_statuses();
+        let a = snap
+            .get(&("acct".to_string(), 10))
+            .expect("project a present in snapshot");
+        assert_eq!(a.status, PipelineStatus::Running);
+        assert_eq!(a.branch, "main");
+        let b = snap
+            .get(&("acct".to_string(), 20))
+            .expect("project b present in snapshot");
+        assert_eq!(b.status, PipelineStatus::Failed);
+        assert_eq!(b.branch, "develop", "branch is tracked per project");
+    }
+
+    /// One gitlab account + one monitored project (id 1) pointed at `base`.
+    fn stale_cfg(base: &str) -> Config {
+        Config {
+            accounts: vec![Account {
+                id: "acct".into(),
+                label: "l".into(),
+                provider: crate::model::ProviderKind::Gitlab,
+                base_url: base.into(),
+                identity: crate::model::Identity {
+                    username: "u".into(),
+                    name: None,
+                    email: None,
+                },
+            }],
+            monitored: vec![crate::model::MonitoredProject {
+                account_id: "acct".into(),
+                project_id: 1,
+                name: "p1".into(),
+                web_url: "u".into(),
+                remote_ref: None,
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_failure_marks_project_stale_keeping_last_known() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/1/pipelines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": 10, "status": "success", "ref": "main", "sha": "a", "web_url": "http://x/10", "updated_at": "t"}
+            ])))
+            .mount(&server)
+            .await;
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acct", "tok").unwrap();
+        let key = ("acct".to_string(), 1u64);
+
+        let mut state = PollState::default();
+        // First poll against the live server: seeds last-known status/branch, fresh (not stale).
+        let cfg_live = stale_cfg(&server.uri());
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live).await;
+        let fresh = state.project_statuses();
+        let v = fresh.get(&key).expect("present after a good poll");
+        assert_eq!(v.status, PipelineStatus::Success);
+        assert_eq!(v.branch, "main");
+        assert!(!v.stale, "fresh after a successful poll");
+
+        // Second poll against a dead address: the fetch errors, so the project is marked stale
+        // but keeps its last-known status and branch (no flicker to unknown).
+        let cfg_dead = stale_cfg("http://127.0.0.1:1");
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead).await;
+        let after = state.project_statuses();
+        let v = after
+            .get(&key)
+            .expect("still present (last-known retained on failure)");
+        assert_eq!(
+            v.status,
+            PipelineStatus::Success,
+            "last-known status retained"
+        );
+        assert_eq!(v.branch, "main", "last-known branch retained");
+        assert!(v.stale, "a failed poll marks the project stale");
+
+        // Third poll back against the live server clears the stale flag.
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live).await;
+        let recovered = state.project_statuses();
+        assert!(
+            !recovered.get(&key).unwrap().stale,
+            "a successful poll clears stale"
         );
     }
 }

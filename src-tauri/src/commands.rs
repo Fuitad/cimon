@@ -5,6 +5,7 @@
 //! authoritative regardless of any frontend checks. Tokens are read from the keychain only at
 //! the point of use and never returned to the frontend.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +18,7 @@ use crate::model::{
     Account, Config, Identity, MonitoredProject, NotificationRules, ProviderKind, MAX_POLL_SECS,
     MIN_POLL_SECS,
 };
+use crate::poller::{ProjectKey, ProjectStatusView};
 use crate::provider::{
     build_http_client, build_provider, DiscoveredProject, Provider, ProviderError,
 };
@@ -284,6 +286,9 @@ pub struct AppState {
     /// Shared (with the poller) so the keychain is read at most once per account per run.
     pub tokens: Arc<dyn TokenStore>,
     pub config_path: PathBuf,
+    /// Latest per-project status snapshot, written by the poller each tick and read by the tray
+    /// to render per-project rows. Empty until the first poll completes.
+    pub project_status: Arc<Mutex<HashMap<ProjectKey, ProjectStatusView>>>,
 }
 
 impl AppState {
@@ -300,6 +305,7 @@ impl AppState {
             http: build_http_client(),
             tokens,
             config_path,
+            project_status: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

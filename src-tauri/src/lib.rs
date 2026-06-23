@@ -129,7 +129,14 @@ pub fn run() {
                             );
                         }
                     },
-                    move |status| {
+                    move |status, snapshot| {
+                        // Publish the per-project snapshot to shared state BEFORE rebuilding the
+                        // menu, in a scoped lock so the write is released before refresh_menu reads
+                        // it. The tray reads this map to render each project's status row.
+                        {
+                            let state = app_for_tray.state::<commands::AppState>();
+                            *state.project_status.lock().unwrap() = snapshot.clone();
+                        }
                         tray::set_status(&tray_for_status, status);
                         let _ = tray::refresh_menu(&app_for_tray, &tray_for_status);
                     },
