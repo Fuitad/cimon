@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload bundles as run artifacts (manual builds)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cimon-${{ matrix.platform }}-${{ matrix.target || 'x64' }}
           path: |
