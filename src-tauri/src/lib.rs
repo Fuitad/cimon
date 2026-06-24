@@ -198,6 +198,7 @@ pub fn run() {
             commands::set_launch_at_login,
             commands::get_project_statuses,
             commands::open_project_url,
+            commands::app_info,
             commands::show_settings_window,
             commands::quit_app,
             commands::hide_panel,

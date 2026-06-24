@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   Account,
+  AppInfo,
   Config,
   DiscoveredProject,
   Identity,
@@ -331,6 +332,9 @@ export const getProjectStatuses = (): Promise<PanelProject[]> => {
 
 export const openProjectUrl = (url: string): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("open_project_url", { url });
+
+export const appInfo = (): Promise<AppInfo> =>
+  PREVIEW ? Promise.resolve({ version: "dev", built_at_ms: Date.now() }) : invoke("app_info");
 
 export const showSettingsWindow = (): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("show_settings_window");

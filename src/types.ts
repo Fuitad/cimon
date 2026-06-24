@@ -88,6 +88,13 @@ export interface PanelProject {
   stale: boolean;
 }
 
+/** App version and build identity, for confirming which build is running. Mirrors Rust `AppInfo`. */
+export interface AppInfo {
+  version: string;
+  /** Build time as epoch milliseconds (the running binary's mtime), or `null` if unavailable. */
+  built_at_ms: number | null;
+}
+
 export type CommandErrorKind =
   | "unauthorized"
   | "invalid_base_url"
