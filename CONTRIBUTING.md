@@ -30,6 +30,14 @@ Because the binary now keeps a stable signature across rebuilds, the approval pe
 
 The Rust core owns all business logic and secrets. The frontend is a thin UI that calls the core through Tauri commands. Access tokens never leave the operating system keychain and are never exposed to the frontend.
 
+## Naming the app
+
+The display name is exactly `CIMon` (capital C, I, M, then lowercase `on`), as in "Simon" for CI Monitoring. Use `CIMon` in every user-facing place: UI labels, the locale catalogs under `src/locales/` and `src-tauri/locales/`, the window title, `productName` in `tauri.conf.json`, notification titles and bodies, and prose in the README and other docs. Never write `Cimon`, `CImon`, `CIMON`, or `cimon` in user-facing text.
+
+The lowercase `cimon` is intentional in technical identifiers and must not be "corrected", because renaming it breaks the build or stored credentials. That includes the Rust crate and binary name `cimon` (and the library `cimon_lib`), the npm package name, the bundle identifier `io.github.fuitad.cimon`, the keychain service name, the tray menu item IDs, temp directory prefixes, asset file names such as `cimon.svg`, and the `Fuitad/cimon` repository path.
+
+Under `npm run tauri dev` the app runs as the unbundled `cimon` binary, so macOS labels dev notifications `cimon`. A packaged build takes its name from `productName` and correctly shows `CIMon`. That dev label is a development artifact, not a bug.
+
 ## The quality gate
 
 Every change must pass the full quality gate.
