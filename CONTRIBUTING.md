@@ -38,6 +38,41 @@ The lowercase `cimon` is intentional in technical identifiers and must not be "c
 
 Under `npm run tauri dev` the app runs as the unbundled `cimon` binary, so macOS labels dev notifications `cimon`. A packaged build takes its name from `productName` and correctly shows `CIMon`. That dev label is a development artifact, not a bug.
 
+## Translations
+
+CIMon ships English (the canonical language) and French, and new languages are welcome. Strings live in two places, because the UI and the Rust core are localized by separate systems, and a complete translation updates both.
+
+* Frontend strings (the settings window and other in-app labels) live in one JSON catalog per language at `src/locales/<code>/translation.json`, registered in `src/i18n.ts`.
+* Rust-core strings (native notifications, the tray menu, and the status words) live in a single YAML file at `src-tauri/locales/app.yml`, where each key carries every language. It is loaded by `rust-i18n`, configured under `[package.metadata.i18n]` in `src-tauri/Cargo.toml`.
+
+`<code>` is a BCP-47 language code (`en`, `fr`, `de`, `pt-BR`, and so on). English is the fallback for any missing key on both sides, so a partial translation still runs and shows English where it has gaps.
+
+Two rules apply to every value you touch:
+
+* Keep the interpolation placeholders exactly as they appear: `{{var}}` in the frontend JSON, `%{var}` in the Rust YAML. Translate the words around them, never the placeholder name.
+* Accented and non-ASCII letters are content, not decoration. Keep them (`démarré`, `réussi`, `Français`). Never strip accents to plain ASCII.
+
+### Improve an existing language
+
+* Frontend: edit the values in `src/locales/<code>/translation.json`, keeping the key structure identical to `src/locales/en/translation.json`.
+* Notifications, tray, and status words: edit the `<code>:` line under the relevant key in `src-tauri/locales/app.yml`.
+
+### Add a new language
+
+Using German (`de`) as the example, make all five changes together so the language is complete on both sides:
+
+1. Frontend catalog. Copy `src/locales/en/translation.json` to `src/locales/de/translation.json` and translate every value.
+2. Frontend registration. In `src/i18n.ts`, import the new catalog, add `"de"` to `SUPPORTED_LNGS`, and add `de: { translation: de }` to `resources`.
+3. Language menu label. The picker lists each language in its own name through the `language` block of the catalogs. Add the new code to that block in every frontend catalog (`en`, `fr`, and `de`), for example `"de": "Deutsch"`, using the same native name in each file.
+4. Rust catalog. In `src-tauri/locales/app.yml`, add a `de:` line with the translation under every key.
+5. Rust registration. In `src-tauri/Cargo.toml`, add `"de"` to `available-locales` under `[package.metadata.i18n]`.
+
+### Verify the translation
+
+1. `npm run check` passes. The frontend types every `t()` key against the English catalog, so this catches a key the UI references but the English catalog is missing. It does not enforce that other languages are complete (English fills any gap at runtime), so the visual check below is what confirms coverage.
+2. Inside `src-tauri`, `cargo test` passes (the i18n tests confirm the catalog loads and resolves keys).
+3. Run `npm run tauri dev`, open Settings, and switch to the new language. Confirm the settings UI updates, then trigger or wait for a notification and confirm the notification title and body, the tray menu, and the status words are all translated. Anything still in English points to a key missing from your catalog.
+
 ## The quality gate
 
 Every change must pass the full quality gate.

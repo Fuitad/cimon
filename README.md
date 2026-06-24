@@ -2,7 +2,7 @@
 
 CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app that lives in your system tray on Windows or your menu bar on macOS and tells you what your CI pipelines are doing. It watches your CI and surfaces pipeline progress as native notifications, so you can stop babysitting browser tabs.
 
-> Status: early development. Milestone 1 targets GitLab on Windows and macOS. GitHub support follows behind the same provider abstraction.
+> Status: early development. CIMon monitors GitLab and GitHub pipelines, including self-managed GitLab and GitHub Enterprise instances, on macOS, Windows, and Linux. Builds are not yet code-signed (see [Download and install](#download-and-install)).
 
 ## Why CIMon
 
@@ -14,12 +14,14 @@ CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app 
 
 CIMon is fully standalone. It runs entirely on your machine and talks directly to the CI provider you configure. There is no CIMon cloud service, no CIMon account, and no telemetry. Your access token is stored in the operating system credential store (macOS Keychain, Windows Credential Manager), never in a plain file, and it is never sent anywhere except the GitLab or GitHub instance you point it at.
 
-## Features (Milestone 1)
+## Features
 
-* Configure one or more GitLab accounts (gitlab.com or a self-hosted instance) with a scoped access token.
-* Auto-discover the projects your token can access and pick which ones to monitor.
-* Background polling with native notifications when a monitored pipeline, or an individual job within it, starts, succeeds, or fails. Pipeline-level and job-level notifications are independent toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
-* Tray / menu bar icon showing the aggregate status, with quick links to open a pipeline in your browser.
+* Connect one or more GitLab and GitHub accounts, each with a scoped, read-only access token. An account can point at gitlab.com, a self-managed GitLab instance, github.com, or a GitHub Enterprise instance.
+* Auto-discover the projects your token can access (GitLab projects or GitHub repositories) and pick which ones to monitor.
+* Background polling with native notifications when a monitored pipeline (a GitLab pipeline or a GitHub Actions workflow run), or an individual job within it, starts, succeeds, or fails. Pipeline-level and job-level notifications are independent toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
+* Tray / menu bar icon showing the aggregate status across the projects you monitor, with quick links to open a pipeline in your browser.
+* Token health monitoring. If a token becomes invalid, revoked, or expired, the affected account is flagged distinctly in the popover and in Settings (not as a generic connection error), with a one-time notification, and you can replace the token in place from Settings without removing the account. CIMon also warns before a token expires (on launch, then at 72 hours and 24 hours remaining) and shows an "expires in N days" indicator next to each account.
+* Light, dark, or system appearance, with the interface available in English and French.
 * Launch at login.
 
 CIMon is read-only. It monitors and notifies. It does not trigger, re-run, or cancel pipelines.
@@ -94,7 +96,10 @@ cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings &
 
 ## Access token scopes
 
-* GitLab: a personal access token (or project access token) with the `read_api` scope is sufficient. CIMon only reads project and pipeline data.
+CIMon only reads project and pipeline data, so a read-only token is enough. The same scopes apply whether the account is the hosted service or a self-managed / Enterprise instance.
+
+* GitLab: a personal access token (or project access token) with the `read_api` scope.
+* GitHub: a classic personal access token with the `repo` scope, or a fine-grained token with read-only access to Actions, Contents, and Metadata.
 
 ## License
 
