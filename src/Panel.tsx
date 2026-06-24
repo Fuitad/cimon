@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { listen } from "@tauri-apps/api/event";
 
 import {
+  appInfo,
   getConfig,
   getProjectStatuses,
   hidePanel,
@@ -13,7 +14,7 @@ import {
   showSettingsWindow,
 } from "./api";
 import { applyUiMode } from "./theme";
-import type { PanelProject } from "./types";
+import type { AppInfo, PanelProject } from "./types";
 import "./Panel.css";
 
 /** Window chrome to add to the measured card height: 1px top + 1px bottom card border, plus the
@@ -126,11 +127,26 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   return { text: t("panel.summaryProjects", { count: total }), tone: "muted" };
 }
 
+/** Version plus the running binary's build time (e.g. "v0.1.0, built Jun 24 14:42"), so two builds
+ *  that share a version are still distinguishable. The build time is omitted when unavailable. */
+function versionLabel(info: AppInfo): string {
+  const v = info.version === "dev" ? "dev" : `v${info.version}`;
+  if (info.built_at_ms == null) return v;
+  const built = new Date(info.built_at_ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${v} · ${built}`;
+}
+
 function Panel() {
   const { t, i18n } = useTranslation();
   const [projects, setProjects] = useState<PanelProject[] | null>(null);
   const [accountCount, setAccountCount] = useState<number | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
+  const [build, setBuild] = useState<AppInfo | null>(null);
 
   const headerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -158,6 +174,13 @@ function Panel() {
     refresh();
     syncConfig();
   }, [refresh, syncConfig]);
+
+  // Build identity is static for the process; fetch it once so the footer can show which build runs.
+  useEffect(() => {
+    appInfo()
+      .then(setBuild)
+      .catch(() => setBuild(null));
+  }, []);
 
   // The poller (and a monitored-set change) emit this each time the snapshot changes.
   useEffect(() => {
@@ -325,6 +348,7 @@ function Panel() {
           <button type="button" className="pbtn" onClick={() => void showSettingsWindow()}>
             {t("panel.settings")}
           </button>
+          {build && <span className="panel__version mono">{versionLabel(build)}</span>}
           <button type="button" className="pbtn pbtn--quit" onClick={() => void quitApp()}>
             {t("panel.quit")}
           </button>
