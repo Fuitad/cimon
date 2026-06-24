@@ -12,19 +12,24 @@ use crate::secrets::TokenStore;
 /// project id is only unique within its instance/account, hence the account in the key.
 pub type ProjectKey = (String, u64);
 
-/// A per-project status view for the popover panel rows: the latest pipeline's normalized status,
-/// its branch, and when it last changed. Built from [`PollState`] and handed to the panel (via a
-/// command + a per-tick event) so each monitored project can show a colored indicator plus its
-/// current branch, status word, and a relative "updated N ago" time.
+/// A per-project status view for the popover panel rows. Built from [`PollState`] and handed to the
+/// panel (via a command + a per-tick event) so each monitored project can show a colored indicator
+/// plus its current branch, status word, and a relative "updated N ago" time.
+///
+/// `status` is `None` for a project that has only ever FAILED to poll (no pipeline observed yet):
+/// combined with `stale = true`, the panel renders that as "can't connect", distinct from a
+/// project that simply has not been polled yet (absent from the snapshot entirely -> "checking").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectStatusView {
-    pub status: PipelineStatus,
+    /// Last-known normalized status, or `None` when this project has never polled successfully.
+    pub status: Option<PipelineStatus>,
     pub branch: String,
-    /// The latest pipeline's `updated_at` (RFC3339 from the provider). The panel renders this as a
-    /// relative time; an unparseable value is simply not shown.
+    /// The latest pipeline's `updated_at` (RFC3339 from the provider); empty when never observed.
+    /// The panel renders it as a relative time; an empty/unparseable value is simply not shown.
     pub updated_at: String,
-    /// `true` when this project's most recent poll attempt FAILED: the status/branch are the last
-    /// known good values (kept so a transient blip doesn't blank the row), but no longer fresh.
+    /// `true` when this project's most recent poll attempt FAILED. With a known `status` the row is
+    /// shown as offline (last-known kept so a transient blip doesn't blank it); with `status: None`
+    /// it has never succeeded, so the row reads "can't connect".
     pub stale: bool,
 }
 
@@ -191,23 +196,41 @@ impl PollState {
             .max_by_key(|s| s.severity())
     }
 
-    /// Snapshot of each tracked project's latest status and branch, for the tray rows. Keyed by
-    /// the same [`ProjectKey`] the monitored set joins on, so the tray can look each project up.
+    /// Snapshot of each tracked project's status, for the panel rows. Keyed by the same
+    /// [`ProjectKey`] the monitored set joins on, so the panel can look each project up.
+    ///
+    /// Includes both projects that have polled successfully (carrying their last-known status, and
+    /// flagged stale if the latest attempt failed) AND projects that have ONLY ever failed to poll
+    /// (no pipeline yet): the latter are surfaced with `status: None` + `stale: true` so the panel
+    /// shows "can't connect" instead of an indefinite "checking". A project never polled at all is
+    /// absent from the map (the genuine first-poll-in-flight case).
     pub fn project_statuses(&self) -> HashMap<ProjectKey, ProjectStatusView> {
-        self.current
+        let mut out: HashMap<ProjectKey, ProjectStatusView> = self
+            .current
             .iter()
             .map(|(k, p)| {
                 (
                     k.clone(),
                     ProjectStatusView {
-                        status: p.status,
+                        status: Some(p.status),
                         branch: p.ref_.clone(),
                         updated_at: p.updated_at.clone(),
                         stale: self.stale.contains(k),
                     },
                 )
             })
-            .collect()
+            .collect();
+        // Projects that have only ever failed (in `stale`, no `current` entry) become unreachable
+        // rows rather than being dropped. `or_insert_with` leaves the live entries above untouched.
+        for k in &self.stale {
+            out.entry(k.clone()).or_insert_with(|| ProjectStatusView {
+                status: None,
+                branch: String::new(),
+                updated_at: String::new(),
+                stale: true,
+            });
+        }
+        out
     }
 
     /// Flag a project as stale (its most recent poll attempt failed). Its `current` entry is kept.
@@ -754,7 +777,7 @@ mod tests {
         let a = snap
             .get(&("acct".to_string(), 10))
             .expect("project a present in snapshot");
-        assert_eq!(a.status, PipelineStatus::Running);
+        assert_eq!(a.status, Some(PipelineStatus::Running));
         assert_eq!(a.branch, "main");
         assert_eq!(
             a.updated_at, "2026-06-20T00:00:00Z",
@@ -763,8 +786,31 @@ mod tests {
         let b = snap
             .get(&("acct".to_string(), 20))
             .expect("project b present in snapshot");
-        assert_eq!(b.status, PipelineStatus::Failed);
+        assert_eq!(b.status, Some(PipelineStatus::Failed));
         assert_eq!(b.branch, "develop", "branch is tracked per project");
+    }
+
+    #[tokio::test]
+    async fn never_succeeded_failing_project_is_unreachable() {
+        // A project whose FIRST (and only) poll fails has no last-known pipeline. It must still be
+        // surfaced (status None + stale true) so the panel reads "can't connect" rather than an
+        // indefinite "checking" (which would mean a poll is genuinely still in flight).
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acct", "tok").unwrap();
+        let key = ("acct".to_string(), 1u64);
+        let mut state = PollState::default();
+
+        // The only poll hits a dead address: the project never enters `current`.
+        let cfg_dead = stale_cfg("http://127.0.0.1:1");
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead).await;
+
+        let snap = state.project_statuses();
+        let v = snap
+            .get(&key)
+            .expect("a never-succeeded but failing project is surfaced, not dropped");
+        assert_eq!(v.status, None, "no pipeline has ever been observed");
+        assert!(v.stale, "its failing poll marks it unreachable");
+        assert!(v.branch.is_empty(), "no last-known branch to show");
     }
 
     /// One gitlab account + one monitored project (id 1) pointed at `base`.
@@ -812,7 +858,7 @@ mod tests {
         poll_once(&mut state, &build_http_client(), &tokens, &cfg_live).await;
         let fresh = state.project_statuses();
         let v = fresh.get(&key).expect("present after a good poll");
-        assert_eq!(v.status, PipelineStatus::Success);
+        assert_eq!(v.status, Some(PipelineStatus::Success));
         assert_eq!(v.branch, "main");
         assert!(!v.stale, "fresh after a successful poll");
 
@@ -826,7 +872,7 @@ mod tests {
             .expect("still present (last-known retained on failure)");
         assert_eq!(
             v.status,
-            PipelineStatus::Success,
+            Some(PipelineStatus::Success),
             "last-known status retained"
         );
         assert_eq!(v.branch, "main", "last-known branch retained");

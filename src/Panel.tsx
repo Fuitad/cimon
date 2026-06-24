@@ -59,9 +59,10 @@ function dotClass(p: PanelProject): string {
   }
 }
 
-/** Localized status word for a row, including the "checking" placeholder for a never-polled row. */
+/** Localized status word for a row. A project with no known status is either still being polled
+ *  for the first time ("checking") or has only ever failed to reach the server ("can't connect"). */
 function statusWord(p: PanelProject, t: TFunction): string {
-  if (p.status === null) return t("panel.checking");
+  if (p.status === null) return p.stale ? t("panel.unreachable") : t("panel.checking");
   return t(`status.${p.status}`);
 }
 
@@ -88,7 +89,8 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   let running = 0;
   let pending = 0;
   let success = 0;
-  let unknown = 0;
+  let unreachable = 0; // never polled successfully and currently failing -> "can't connect"
+  let checking = 0; // not polled yet (first poll in flight)
   for (const p of projects) {
     switch (p.status) {
       case "failed":
@@ -105,7 +107,8 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
         success++;
         break;
       case null:
-        unknown++;
+        if (p.stale) unreachable++;
+        else checking++;
         break;
       default:
         break; // canceled / skipped / other: settled, not surfaced in the summary headline
@@ -113,9 +116,11 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   }
   const total = projects.length;
   if (failed > 0) return { text: t("panel.summaryFailing", { count: failed }), tone: "danger" };
+  if (unreachable > 0)
+    return { text: t("panel.summaryUnreachable", { count: unreachable }), tone: "muted" };
   if (running > 0) return { text: t("panel.summaryRunning", { count: running }), tone: "running" };
   if (pending > 0) return { text: t("panel.summaryPending", { count: pending }), tone: "pending" };
-  if (unknown === total) return { text: t("panel.summaryChecking"), tone: "muted" };
+  if (checking === total) return { text: t("panel.summaryChecking"), tone: "muted" };
   if (success === total) return { text: t("panel.summaryAllPassing"), tone: "ok" };
   return { text: t("panel.summaryProjects", { count: total }), tone: "muted" };
 }
@@ -230,7 +235,7 @@ function Panel() {
               {p.branch && <span className="prow__branch mono">{p.branch}</span>}
               <span className="prow__status">
                 {statusWord(p, t)}
-                {p.stale ? ` · ${t("panel.offline")}` : ""}
+                {p.stale && p.status !== null ? ` · ${t("panel.offline")}` : ""}
               </span>
               {rel && <span className="prow__time">{rel}</span>}
             </span>

@@ -465,9 +465,10 @@ pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProje
                 project_id: mp.project_id,
                 name: mp.name.clone(),
                 web_url: mp.web_url.clone(),
-                status: view.map(|v| v.status),
+                status: view.and_then(|v| v.status),
                 branch: view.map(|v| v.branch.clone()).unwrap_or_default(),
-                updated_at: view.map(|v| v.updated_at.clone()),
+                updated_at: view
+                    .and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
                 stale: view.is_some_and(|v| v.stale),
             }
         })

@@ -311,10 +311,20 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
   },
 ];
 
+// `?preview=offline` reproduces a VPN-down scenario: projects that have never polled successfully
+// (status null + stale) read as "can't connect", distinct from a freshly-added project still being
+// polled for the first time (status null, not stale) which reads "checking".
+const PANEL_OFFLINE_FIXTURE: PanelProject[] = [
+  { ...PANEL_FIXTURE[2], status: null, branch: "", updated_at: null, stale: true },
+  { ...PANEL_FIXTURE[1], status: null, branch: "", updated_at: null, stale: true },
+  PANEL_FIXTURE[5], // never polled yet (status null, not stale) -> "checking"
+];
+
 export const getProjectStatuses = (): Promise<PanelProject[]> => {
   if (!PREVIEW) return invoke("get_project_statuses");
   if (previewEmpty()) return Promise.resolve([]);
   if (previewParam() === "multi") return Promise.resolve(PANEL_MULTI_FIXTURE);
+  if (previewParam() === "offline") return Promise.resolve(PANEL_OFFLINE_FIXTURE);
   return Promise.resolve(PANEL_FIXTURE);
 };
 
