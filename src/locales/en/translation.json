@@ -22,7 +22,11 @@
     "pollIntervalHint": "How often to check for changes.",
     "seconds": "sec",
     "launchAtLogin": "Launch at login",
-    "launchAtLoginError": "Could not change the launch-at-login setting."
+    "launchAtLoginError": "Could not change the launch-at-login setting.",
+    "appearance": "Appearance",
+    "appearanceSystem": "System",
+    "appearanceLight": "Light",
+    "appearanceDark": "Dark"
   },
   "language": {
     "en": "English",

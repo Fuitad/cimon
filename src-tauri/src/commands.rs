@@ -16,7 +16,7 @@ use crate::config;
 use crate::i18n;
 use crate::model::{
     Account, Config, Identity, MonitoredProject, NotificationRules, PipelineStatus, ProviderKind,
-    MAX_POLL_SECS, MIN_POLL_SECS,
+    UiMode, MAX_POLL_SECS, MIN_POLL_SECS,
 };
 use crate::poller::{ProjectKey, ProjectStatusView};
 use crate::provider::{
@@ -252,6 +252,16 @@ fn set_locale_logic(cfg: &Mutex<Config>, cfg_path: &Path, code: &str) -> Result<
     Ok(())
 }
 
+fn set_ui_mode_logic(
+    cfg: &Mutex<Config>,
+    cfg_path: &Path,
+    mode: UiMode,
+) -> Result<(), CommandError> {
+    let mut guard = cfg.lock().unwrap();
+    guard.ui_mode = mode;
+    config::save(cfg_path, &guard).map_err(storage_err)
+}
+
 async fn list_discovered_logic(
     http: &reqwest::Client,
     tokens: &dyn TokenStore,
@@ -421,6 +431,19 @@ pub fn set_locale(
 ) -> Result<(), CommandError> {
     set_locale_logic(&state.config, &state.config_path, &code)?;
     crate::tray::refresh(&app); // retranslate the tray menu now (it reads the global locale)
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_ui_mode(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    mode: UiMode,
+) -> Result<(), CommandError> {
+    set_ui_mode_logic(&state.config, &state.config_path, mode)?;
+    // Keep the settings window's native chrome in step with the chosen theme (the webview content
+    // is themed by the frontend). Applied now so the titlebar switches with the rest of the UI.
+    crate::window::apply_theme(&app, mode);
     Ok(())
 }
 
@@ -847,6 +870,19 @@ mod tests {
         // A well-formed owner/repo is accepted and persisted.
         set_monitored_logic(&cfg, &path, "gh", vec![mk(Some("acme/web-app"))]).unwrap();
         assert_eq!(cfg.lock().unwrap().monitored.len(), 1);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn set_ui_mode_persists() {
+        let path = temp_path("ui-mode");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let cfg = Mutex::new(Config::default());
+        assert_eq!(cfg.lock().unwrap().ui_mode, UiMode::System);
+        set_ui_mode_logic(&cfg, &path, UiMode::Dark).unwrap();
+        assert_eq!(cfg.lock().unwrap().ui_mode, UiMode::Dark);
+        // The choice survives a reload from disk.
+        assert_eq!(crate::config::load(&path).ui_mode, UiMode::Dark);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

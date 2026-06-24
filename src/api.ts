@@ -9,6 +9,7 @@ import type {
   NotificationRules,
   PanelProject,
   ProviderKind,
+  UiMode,
 } from "./types";
 
 // Tauri v2 maps camelCase JS keys to snake_case Rust parameters automatically.
@@ -413,6 +414,7 @@ export const getConfig = (): Promise<Config> =>
         poll_interval_secs: 30,
         launch_at_login: false,
         locale: null,
+        ui_mode: "system",
       })
     : invoke("get_config");
 
@@ -441,6 +443,9 @@ export const setPollInterval = (secs: number): Promise<void> =>
 
 export const setLocale = (code: string): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("set_locale", { code });
+
+export const setUiMode = (mode: UiMode): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("set_ui_mode", { mode });
 
 export const setLaunchAtLogin = (enabled: boolean): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("set_launch_at_login", { enabled });

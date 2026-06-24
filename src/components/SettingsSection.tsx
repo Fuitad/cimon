@@ -7,9 +7,11 @@ import {
   setLocale,
   setNotificationRules,
   setPollInterval,
+  setUiMode,
 } from "../api";
 import { SUPPORTED_LNGS } from "../i18n";
-import type { NotificationRules } from "../types";
+import { applyUiMode } from "../theme";
+import type { NotificationRules, UiMode } from "../types";
 
 const DEFAULT_RULES: NotificationRules = {
   on_start: false,
@@ -24,6 +26,7 @@ function SettingsSection() {
   const { t, i18n } = useTranslation();
   const [rules, setRules] = useState<NotificationRules>(DEFAULT_RULES);
   const [intervalSecs, setIntervalSecs] = useState(30);
+  const [uiMode, setUiModeState] = useState<UiMode>("system");
   const [launch, setLaunch] = useState(false);
   // Launch-at-login touches OS login items, so unlike the pure-config writes it can genuinely
   // fail (permissions, sandbox). Revert the optimistic toggle and surface it when it does.
@@ -34,6 +37,7 @@ function SettingsSection() {
       .then((cfg) => {
         setRules(cfg.rules);
         setIntervalSecs(cfg.poll_interval_secs);
+        setUiModeState(cfg.ui_mode);
         setLaunch(cfg.launch_at_login);
       })
       .catch(() => {
@@ -50,6 +54,12 @@ function SettingsSection() {
   const onLanguage = (code: string) => {
     void i18n.changeLanguage(code);
     void setLocale(code).catch(() => {});
+  };
+
+  const onUiMode = (mode: UiMode) => {
+    setUiModeState(mode);
+    applyUiMode(mode); // apply to this window immediately; persistence is best-effort
+    void setUiMode(mode).catch(() => {});
   };
 
   const onLaunch = (v: boolean) => {
@@ -134,6 +144,19 @@ function SettingsSection() {
           </label>
 
           {toggle(t("settings.launchAtLogin"), launch, onLaunch)}
+
+          <label className="ctl">
+            <span className="ctl__label">{t("settings.appearance")}</span>
+            <select
+              className="select"
+              value={uiMode}
+              onChange={(e) => onUiMode(e.target.value as UiMode)}
+            >
+              <option value="system">{t("settings.appearanceSystem")}</option>
+              <option value="light">{t("settings.appearanceLight")}</option>
+              <option value="dark">{t("settings.appearanceDark")}</option>
+            </select>
+          </label>
 
           <label className="ctl">
             <span className="ctl__label">{t("settings.language")}</span>

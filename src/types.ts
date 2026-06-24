@@ -35,6 +35,9 @@ export interface NotificationRules {
   job_level: boolean;
 }
 
+/** Color theme for the app windows. `system` follows the OS appearance. Mirrors Rust `UiMode`. */
+export type UiMode = "system" | "light" | "dark";
+
 export interface Config {
   accounts: Account[];
   monitored: MonitoredProject[];
@@ -42,6 +45,7 @@ export interface Config {
   poll_interval_secs: number;
   launch_at_login: boolean;
   locale: string | null;
+  ui_mode: UiMode;
 }
 
 export interface DiscoveredProject {
