@@ -69,5 +69,42 @@
     "none": "Aucun projet trouvé pour ce compte.",
     "noMatch": "Aucun projet ne correspond à votre recherche.",
     "loadError": "Impossible de charger les projets : {{message}}"
+  },
+  "status": {
+    "running": "En cours",
+    "success": "Réussi",
+    "failed": "Échoué",
+    "canceled": "Annulé",
+    "skipped": "Ignoré",
+    "pending": "En attente",
+    "manual": "Manuel",
+    "other": "Inconnu"
+  },
+  "panel": {
+    "ariaLabel": "État des pipelines CIMon",
+    "summaryAllPassing": "Tout réussi",
+    "summaryFailing_one": "{{count}} en échec",
+    "summaryFailing_other": "{{count}} en échec",
+    "summaryRunning_one": "{{count}} en cours",
+    "summaryRunning_other": "{{count}} en cours",
+    "summaryPending_one": "{{count}} en attente",
+    "summaryPending_other": "{{count}} en attente",
+    "summaryProjects_one": "{{count}} projet",
+    "summaryProjects_other": "{{count}} projets",
+    "summaryChecking": "Vérification...",
+    "checking": "Vérification",
+    "offline": "hors ligne",
+    "settings": "Paramètres",
+    "quit": "Quitter",
+    "emptyNoProjectsTitle": "Aucun projet surveillé",
+    "emptyNoProjectsBody": "Choisissez les projets que CIMon doit surveiller.",
+    "emptyNoProjectsCta": "Choisir des projets",
+    "emptyNoAccountsTitle": "Aucun compte connecté",
+    "emptyNoAccountsBody": "Connectez un compte GitLab ou GitHub pour commencer la surveillance.",
+    "emptyNoAccountsCta": "Connecter un compte",
+    "justNow": "à l'instant",
+    "minAgo": "il y a {{n}} min",
+    "hourAgo": "il y a {{n}} h",
+    "dayAgo": "il y a {{n}} j"
   }
 }

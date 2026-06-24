@@ -1,116 +1,9 @@
-/* CIMon settings window. One cross-platform design language (not Mac-, Windows-, or Linux-
-   specific): developer-tool minimal, calm at rest, status-first. Light and dark follow the OS.
-   See DESIGN.md for the system this implements. */
+/* CIMon settings window. Design tokens + base reset are shared via tokens.css (imported below);
+   this file holds the settings-window components. One cross-platform design language (not Mac-,
+   Windows-, or Linux-specific): developer-tool minimal, calm at rest, status-first. Light and dark
+   follow the OS. See DESIGN.md for the system this implements. */
 
-:root {
-  /* Neutrals (light) */
-  --bg: oklch(0.985 0.003 155);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.975 0.004 155);
-  --border: oklch(0.9 0.006 155);
-  --border-strong: oklch(0.84 0.008 155);
-  --ink: oklch(0.27 0.012 155);
-  --ink-muted: oklch(0.5 0.012 155);
-  --ink-faint: oklch(0.62 0.01 155);
-
-  /* Brand accent (CIMon green), restrained: actions, focus, selection */
-  --accent: oklch(0.53 0.15 150);
-  --accent-hover: oklch(0.48 0.15 150);
-  --accent-ink: oklch(0.99 0.01 150);
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --focus-ring: color-mix(in oklch, var(--accent) 45%, transparent);
-
-  /* Status: same hues as src-tauri/src/tray.rs::status_color (the vibrant pipeline palette),
-     tuned here for window-surface contrast rather than byte-identical. */
-  --status-ok: oklch(0.6 0.14 150);
-
-  --danger: oklch(0.55 0.17 25);
-  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
-
-  /* Type */
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
-
-  /* Space scale (4px base) */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 40px;
-
-  /* Radii */
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-pill: 999px;
-
-  /* Elevation */
-  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.06);
-  --shadow-pop: 0 8px 24px oklch(0 0 0 / 0.12);
-
-  --z-header: 10;
-
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: oklch(0.17 0.008 155);
-    --surface: oklch(0.205 0.008 155);
-    --surface-2: oklch(0.245 0.009 155);
-    --border: oklch(0.3 0.01 155);
-    --border-strong: oklch(0.38 0.012 155);
-    --ink: oklch(0.96 0.004 155);
-    --ink-muted: oklch(0.74 0.01 155);
-    --ink-faint: oklch(0.6 0.01 155);
-
-    --accent: oklch(0.8 0.17 150);
-    --accent-hover: oklch(0.85 0.17 150);
-    --accent-ink: oklch(0.2 0.03 150);
-    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
-    --focus-ring: color-mix(in oklch, var(--accent) 55%, transparent);
-
-    --status-ok: oklch(0.8 0.16 150);
-    --danger: oklch(0.7 0.16 25);
-    --danger-soft: color-mix(in oklch, var(--danger) 18%, transparent);
-
-    --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.4);
-    --shadow-pop: 0 10px 30px oklch(0 0 0 / 0.5);
-  }
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--ink);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-.muted {
-  color: var(--ink-muted);
-}
+@import "./tokens.css";
 
 /* ---- App shell --------------------------------------------------------------------------- */
 
@@ -875,15 +768,10 @@ body {
 }
 
 /* ---- Reduced motion ---------------------------------------------------------------------- */
+/* The generic transition/animation reset lives in tokens.css; this is the skeleton-specific
+   override (a static fill instead of the shimmer). */
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-  }
   .skeleton {
     animation: none;
     background: var(--surface-2);

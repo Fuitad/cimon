@@ -69,5 +69,42 @@
     "none": "No projects found for this account.",
     "noMatch": "No projects match your search.",
     "loadError": "Could not load projects: {{message}}"
+  },
+  "status": {
+    "running": "Running",
+    "success": "Passed",
+    "failed": "Failed",
+    "canceled": "Canceled",
+    "skipped": "Skipped",
+    "pending": "Pending",
+    "manual": "Manual",
+    "other": "Unknown"
+  },
+  "panel": {
+    "ariaLabel": "CIMon pipeline status",
+    "summaryAllPassing": "All passing",
+    "summaryFailing_one": "{{count}} failing",
+    "summaryFailing_other": "{{count}} failing",
+    "summaryRunning_one": "{{count}} running",
+    "summaryRunning_other": "{{count}} running",
+    "summaryPending_one": "{{count}} pending",
+    "summaryPending_other": "{{count}} pending",
+    "summaryProjects_one": "{{count}} project",
+    "summaryProjects_other": "{{count}} projects",
+    "summaryChecking": "Checking...",
+    "checking": "Checking",
+    "offline": "offline",
+    "settings": "Settings",
+    "quit": "Quit",
+    "emptyNoProjectsTitle": "No projects monitored",
+    "emptyNoProjectsBody": "Choose the projects you want CIMon to watch.",
+    "emptyNoProjectsCta": "Choose projects",
+    "emptyNoAccountsTitle": "No account connected",
+    "emptyNoAccountsBody": "Connect a GitLab or GitHub account to start monitoring.",
+    "emptyNoAccountsCta": "Connect an account",
+    "justNow": "just now",
+    "minAgo": "{{n}}m ago",
+    "hourAgo": "{{n}}h ago",
+    "dayAgo": "{{n}}d ago"
   }
 }

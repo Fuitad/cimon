@@ -7,6 +7,7 @@ import type {
   Identity,
   MonitoredProject,
   NotificationRules,
+  PanelProject,
   ProviderKind,
 } from "./types";
 
@@ -194,6 +195,141 @@ const GITHUB_FIXTURE_PROJECTS: DiscoveredProject[] = [
     remote_ref: "octocat/dotfiles",
   },
 ];
+
+// Panel preview fixtures (dev only). `?preview=empty` -> no monitored projects (the panel's
+// empty/CTA state); `?preview=multi` -> two accounts so the per-account grouping is reviewable;
+// default -> one account with a spread of statuses (success, running, failed, pending, stale,
+// never-polled) so every row treatment is visible in a plain browser.
+const ago = (mins: number): string => new Date(Date.now() - mins * 60_000).toISOString();
+const PANEL_FIXTURE: PanelProject[] = [
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 41,
+    name: "web-app",
+    web_url: "https://gitlab.com/acme/frontend/web-app",
+    status: "failed",
+    branch: "main",
+    updated_at: ago(4),
+    stale: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 42,
+    name: "api-gateway",
+    web_url: "https://gitlab.com/acme/backend/api-gateway",
+    status: "running",
+    branch: "feature/checkout-v2",
+    updated_at: ago(0),
+    stale: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 43,
+    name: "auth-service",
+    web_url: "https://gitlab.com/acme/backend/auth-service",
+    status: "success",
+    branch: "main",
+    updated_at: ago(12),
+    stale: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 44,
+    name: "design-system",
+    web_url: "https://gitlab.com/acme/frontend/design-system",
+    status: "pending",
+    branch: "release/2.1",
+    updated_at: ago(1),
+    stale: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 45,
+    name: "terraform-infra",
+    web_url: "https://gitlab.com/acme/ops/terraform-infra",
+    status: "success",
+    branch: "main",
+    updated_at: ago(180),
+    stale: true,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 46,
+    name: "mobile-client",
+    web_url: "https://gitlab.com/acme/mobile/mobile-client",
+    status: null,
+    branch: "",
+    updated_at: null,
+    stale: false,
+  },
+];
+const PANEL_MULTI_FIXTURE: PanelProject[] = [
+  ...PANEL_FIXTURE.slice(0, 3),
+  {
+    account_id: "gh-1",
+    account_label: "",
+    provider: "github",
+    base_url: "https://github.com",
+    project_id: 2001,
+    name: "octobox",
+    web_url: "https://github.com/octocat/octobox",
+    status: "success",
+    branch: "main",
+    updated_at: ago(7),
+    stale: false,
+  },
+  {
+    account_id: "gh-1",
+    account_label: "",
+    provider: "github",
+    base_url: "https://github.com",
+    project_id: 2002,
+    name: "a-deliberately-long-repository-name-to-exercise-row-truncation",
+    web_url: "https://github.com/octocat/long",
+    status: "failed",
+    branch: "fix/very-long-branch-name-for-truncation-testing",
+    updated_at: ago(2),
+    stale: false,
+  },
+];
+
+export const getProjectStatuses = (): Promise<PanelProject[]> => {
+  if (!PREVIEW) return invoke("get_project_statuses");
+  if (previewEmpty()) return Promise.resolve([]);
+  if (previewParam() === "multi") return Promise.resolve(PANEL_MULTI_FIXTURE);
+  return Promise.resolve(PANEL_FIXTURE);
+};
+
+export const openProjectUrl = (url: string): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("open_project_url", { url });
+
+export const showSettingsWindow = (): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("show_settings_window");
+
+export const quitApp = (): Promise<void> => (PREVIEW ? Promise.resolve() : invoke("quit_app"));
+
+export const hidePanel = (): Promise<void> => (PREVIEW ? Promise.resolve() : invoke("hide_panel"));
+
+export const setPanelHeight = (height: number): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("set_panel_height", { height });
 
 export const addAccount = (
   provider: ProviderKind,
