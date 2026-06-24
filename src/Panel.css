@@ -186,6 +186,13 @@ body {
 .prow__dot--stale {
   background: var(--ink-faint);
 }
+/* Dead token (expired/revoked/invalid): a danger dot with a halo, distinct from both the plain
+   "failed" pipeline dot and the muted grey offline dot. The "token invalid" word carries the
+   precise meaning, so state is never conveyed by color alone. */
+.prow__dot--auth-failed {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 22%, transparent);
+}
 
 @keyframes cimon-pulse {
   0%,

@@ -208,6 +208,41 @@
   background: var(--status-ok);
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--status-ok) 18%, transparent);
 }
+.dot--danger {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 18%, transparent);
+}
+
+/* Token-health row affordances: auth-failed alert, expiry indicator, inline token re-entry. */
+.row__actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+.row__alert {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--danger);
+}
+.row__expiry {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+.row__expiry--warn {
+  font-weight: 500;
+  color: var(--danger);
+}
+.row__token-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.row__token-edit .input {
+  flex: 1;
+  min-width: 14ch;
+}
 
 /* ---- Forms & fields ---------------------------------------------------------------------- */
 

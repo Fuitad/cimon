@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod expiry;
 mod i18n;
 mod model;
 mod notify;
@@ -143,6 +144,7 @@ pub fn run() {
             let tokens = app.state::<commands::AppState>().tokens.clone();
             let app_for_notify = app.handle().clone();
             let app_for_tray = app.handle().clone();
+            let app_for_tokens = app.handle().clone();
             let tray_for_status = tray.clone();
             tauri::async_runtime::spawn(async move {
                 poller::run_poller(
@@ -165,17 +167,32 @@ pub fn run() {
                             );
                         }
                     },
-                    move |status, snapshot| {
-                        // Publish the per-project snapshot to shared state in a scoped lock (the
-                        // write is released before anything reads it). The panel reads this map via
-                        // the get_project_statuses command; the tray glyph reflects the aggregate.
+                    move |status, snapshot, token_health| {
+                        // Publish the per-project AND per-account snapshots to shared state in a
+                        // scoped lock (released before anything reads them). The panel reads
+                        // project_status (rows) + token_health (per-row auth-failed flag) via
+                        // get_project_statuses; the settings UI reads token_health via
+                        // get_token_health; the tray glyph reflects the aggregate.
                         {
                             let state = app_for_tray.state::<commands::AppState>();
                             *state.project_status.lock().unwrap() = snapshot.clone();
+                            *state.token_health.lock().unwrap() = token_health.clone();
                         }
                         tray::set_status(&tray_for_status, status);
                         // Nudge an open panel to re-fetch the fresh snapshot (cheap when closed).
                         panel::notify_changed(&app_for_tray);
+                    },
+                    // Token-health events: fire native auth-failed / expiry notifications, localized
+                    // in the active locale (the background poller runs without a webview).
+                    move |token_events: &[poller::TokenEvent]| {
+                        let state = app_for_tokens.state::<commands::AppState>();
+                        let locale = {
+                            let cfg = state.config.lock().unwrap();
+                            i18n::resolve(&cfg)
+                        };
+                        for ev in token_events {
+                            notify::notify_token_event(&app_for_tokens, ev, &locale);
+                        }
                     },
                 )
                 .await;
@@ -197,6 +214,8 @@ pub fn run() {
             commands::set_ui_mode,
             commands::set_launch_at_login,
             commands::get_project_statuses,
+            commands::get_token_health,
+            commands::update_account_token,
             commands::open_project_url,
             commands::app_info,
             commands::show_settings_window,

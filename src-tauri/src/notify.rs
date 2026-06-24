@@ -5,7 +5,7 @@
 //! locale with no dependency on the webview.
 
 use crate::model::NotificationRules;
-use crate::poller::{Transition, TransitionKind};
+use crate::poller::{TokenEvent, TokenEventKind, Transition, TransitionKind};
 
 /// Whether the user's rules ask to be notified about this transition. A transition fires only
 /// when BOTH its event type (start/success/fail) AND its detail level (pipeline vs job) are
@@ -82,6 +82,53 @@ pub fn running_in_menu_bar_message(locale: &str) -> (String, String) {
 pub fn notify_running_in_menu_bar(app: &tauri::AppHandle, locale: &str) {
     use tauri_plugin_notification::NotificationExt;
     let (title, body) = running_in_menu_bar_message(locale);
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// Build the localized `(title, body)` for a dead-token ("authentication failed") notification.
+pub fn format_auth_failed(account: &str, locale: &str) -> (String, String) {
+    (
+        rust_i18n::t!(
+            "notify.auth_failed_title",
+            locale = locale,
+            account = account
+        )
+        .to_string(),
+        rust_i18n::t!(
+            "notify.auth_failed_body",
+            locale = locale,
+            account = account
+        )
+        .to_string(),
+    )
+}
+
+/// Build the localized `(title, body)` for a token-expiring-soon notification. `hours` is the
+/// warning bracket (72 or 24): the token has at most that many hours left.
+pub fn format_expiry_warning(account: &str, hours: i64, locale: &str) -> (String, String) {
+    (
+        rust_i18n::t!("notify.expiry_title", locale = locale, account = account).to_string(),
+        rust_i18n::t!(
+            "notify.expiry_body",
+            locale = locale,
+            account = account,
+            hours = hours
+        )
+        .to_string(),
+    )
+}
+
+/// Fire a native notification for a token-health event. These are NOT clickable (unlike transition
+/// notifications) and always fire: they are operational alerts about the monitor itself, not CI
+/// noise, so they ignore the pipeline/job `NotificationRules` toggles.
+pub fn notify_token_event(app: &tauri::AppHandle, event: &TokenEvent, locale: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let (title, body) = match &event.kind {
+        TokenEventKind::AuthFailed => format_auth_failed(&event.account_label, locale),
+        TokenEventKind::ExpiringSoon { hours, .. } => {
+            format_expiry_warning(&event.account_label, *hours, locale)
+        }
+    };
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
@@ -318,5 +365,26 @@ mod tests {
         assert!(body_en.contains("menu bar"));
         let (title_fr, _) = running_in_menu_bar_message("fr");
         assert_eq!(title_fr, "CIMon fonctionne dans votre barre de menus");
+    }
+
+    #[test]
+    fn format_auth_failed_localizes_en_and_fr() {
+        let (title_en, body_en) = format_auth_failed("Work", "en");
+        assert_eq!(title_en, "Work: token no longer valid");
+        assert!(body_en.contains("Update the token"));
+        let (title_fr, _) = format_auth_failed("Work", "fr");
+        assert_eq!(title_fr, "Work : jeton non valide");
+    }
+
+    #[test]
+    fn format_expiry_warning_names_account_and_hours() {
+        let (title_en, body_en) = format_expiry_warning("Work", 72, "en");
+        assert_eq!(title_en, "Work: token expiring soon");
+        assert!(body_en.contains("72h"), "body names the bracket: {body_en}");
+        let (_, body_fr) = format_expiry_warning("Work", 24, "fr");
+        assert!(
+            body_fr.contains("24"),
+            "fr body names the bracket: {body_fr}"
+        );
     }
 }

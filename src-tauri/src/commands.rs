@@ -18,7 +18,7 @@ use crate::model::{
     Account, Config, Identity, MonitoredProject, NotificationRules, PipelineStatus, ProviderKind,
     UiMode, MAX_POLL_SECS, MIN_POLL_SECS,
 };
-use crate::poller::{ProjectKey, ProjectStatusView};
+use crate::poller::{ProjectKey, ProjectStatusView, TokenHealthView};
 use crate::provider::{
     build_http_client, build_provider, DiscoveredProject, Provider, ProviderError,
 };
@@ -308,6 +308,19 @@ pub struct PanelProject {
     pub updated_at: Option<String>,
     /// `true` when the most recent poll FAILED: status/branch are last-known, shown as offline.
     pub stale: bool,
+    /// `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
+    /// over `stale` in the panel: the row reads "authentication failed", not "offline".
+    pub auth_failed: bool,
+}
+
+/// Per-account token health for the settings UI, joining the account list onto the poller's
+/// runtime [`TokenHealthView`] so the frontend can show an auth-failure / expiry indicator per row.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountTokenHealth {
+    pub account_id: String,
+    pub auth_failed: bool,
+    /// Raw provider expiry string, or `None` (no expiry / not yet known). Frontend renders relative.
+    pub expires_at: Option<String>,
 }
 
 /// Shared application state managed by Tauri and used by all commands.
@@ -323,6 +336,10 @@ pub struct AppState {
     /// Latest per-project status snapshot, written by the poller each tick and read by the tray
     /// to render per-project rows. Empty until the first poll completes.
     pub project_status: Arc<Mutex<HashMap<ProjectKey, ProjectStatusView>>>,
+    /// Latest per-account token-health snapshot, written by the poller each tick and read by the
+    /// panel (`auth_failed` per project) and the settings UI (`get_token_health`). Empty until the
+    /// first poll completes; runtime-only (never persisted).
+    pub token_health: Arc<Mutex<HashMap<String, TokenHealthView>>>,
 }
 
 /// A dev-only file-backed token store, or `None` to fall back to the OS keychain.
@@ -366,6 +383,7 @@ impl AppState {
             tokens,
             config_path,
             project_status: Arc::new(Mutex::new(HashMap::new())),
+            token_health: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -497,10 +515,13 @@ pub fn set_launch_at_login(
 /// Monitored projects joined with their latest status, for the tray popover panel. Returns one
 /// entry per monitored project in config order; a project not yet observed by the poller carries a
 /// `None` status (a "checking" row). The frontend groups by account when more than one exists.
-#[tauri::command]
-pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProject> {
-    let cfg = state.config.lock().unwrap();
-    let snapshot = state.project_status.lock().unwrap();
+/// Join the monitored set with the latest per-project status snapshot and per-account token health
+/// into the panel DTO. Extracted from the command so it is testable without a Tauri runtime.
+fn build_panel_projects(
+    cfg: &Config,
+    snapshot: &HashMap<ProjectKey, ProjectStatusView>,
+    health: &HashMap<String, TokenHealthView>,
+) -> Vec<PanelProject> {
     cfg.monitored
         .iter()
         .map(|mp| {
@@ -519,9 +540,142 @@ pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProje
                 updated_at: view
                     .and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
                 stale: view.is_some_and(|v| v.stale),
+                auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
             }
         })
         .collect()
+}
+
+#[tauri::command]
+pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProject> {
+    let cfg = state.config.lock().unwrap();
+    let snapshot = state.project_status.lock().unwrap();
+    let health = state.token_health.lock().unwrap();
+    build_panel_projects(&cfg, &snapshot, &health)
+}
+
+/// Join the account list onto the runtime token-health snapshot, one entry per account in config
+/// order. An account absent from the snapshot (not yet polled) reads as healthy with no expiry.
+fn build_token_health(
+    cfg: &Config,
+    health: &HashMap<String, TokenHealthView>,
+) -> Vec<AccountTokenHealth> {
+    cfg.accounts
+        .iter()
+        .map(|a| {
+            let v = health.get(&a.id);
+            AccountTokenHealth {
+                account_id: a.id.clone(),
+                auth_failed: v.is_some_and(|h| h.auth_failed),
+                expires_at: v.and_then(|h| h.expires_at.clone()),
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn get_token_health(state: tauri::State<'_, AppState>) -> Vec<AccountTokenHealth> {
+    let cfg = state.config.lock().unwrap();
+    let health = state.token_health.lock().unwrap();
+    build_token_health(&cfg, &health)
+}
+
+/// Replace the token for an existing account in place (the only way to recover from an expired or
+/// revoked token without removing the account). Validates the NEW token against the account's
+/// provider BEFORE storing it, then overwrites the keychain entry, refreshes the stored identity,
+/// and clears the runtime token-health so the UI reflects recovery immediately.
+#[allow(clippy::too_many_arguments)]
+async fn update_account_token_logic(
+    http: &reqwest::Client,
+    tokens: &dyn TokenStore,
+    cfg: &Mutex<Config>,
+    cfg_path: &Path,
+    token_health: &Mutex<HashMap<String, TokenHealthView>>,
+    account_id: &str,
+    token: String,
+) -> Result<Identity, CommandError> {
+    // Read the account's provider + base URL under the lock, then release it before the await.
+    let (provider_kind, base_url) = {
+        let guard = cfg.lock().unwrap();
+        guard
+            .accounts
+            .iter()
+            .find(|a| a.id == account_id)
+            .map(|a| (a.provider, a.base_url.clone()))
+            .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "account not found"))?
+    };
+
+    // Validate the NEW token against the account's provider BEFORE storing anything. The error from
+    // a rejected token is status-derived (see `ProviderError`), so it never echoes the token.
+    let client = build_provider(provider_kind, http.clone(), base_url, token.clone());
+    let identity = client.validate_token().await?;
+
+    // Capture the prior token so a later persistence failure can be rolled back, leaving the
+    // account exactly as it was (no half-applied credential change, mirroring `add_account_logic`).
+    let old_token = tokens
+        .get(account_id)
+        .ok()
+        .flatten()
+        .map(|t| t.expose().to_string());
+
+    // Overwrite the keychain entry. `CachingTokenStore::store` writes through to its in-memory
+    // cache, so the poller's next `get` returns the new token and polling resumes with it.
+    tokens.store(account_id, &token).map_err(storage_err)?;
+
+    // Refresh the stored identity and persist (tokens never live in the config file). On a save
+    // failure, restore the in-memory identity AND the prior token before returning, so the command
+    // is transactional: a reported failure leaves the stored token unchanged.
+    let save_result = {
+        let mut guard = cfg.lock().unwrap();
+        let pos = guard.accounts.iter().position(|a| a.id == account_id);
+        let old_identity = pos.map(|i| guard.accounts[i].identity.clone());
+        if let Some(i) = pos {
+            guard.accounts[i].identity = identity.clone();
+        }
+        let res = config::save(cfg_path, &guard);
+        if res.is_err() {
+            if let (Some(i), Some(old)) = (pos, old_identity) {
+                guard.accounts[i].identity = old;
+            }
+        }
+        res
+    };
+    if let Err(e) = save_result {
+        // Roll the keychain back to the prior token (or drop it if there was none).
+        match old_token {
+            Some(t) => {
+                let _ = tokens.store(account_id, &t);
+            }
+            None => {
+                let _ = tokens.delete(account_id);
+            }
+        }
+        return Err(storage_err(e));
+    }
+
+    // Clear any stale auth-failed / expiry state so the UI reflects recovery immediately; the next
+    // poll re-checks with the new token and repopulates this entry.
+    token_health.lock().unwrap().remove(account_id);
+
+    Ok(identity)
+}
+
+#[tauri::command]
+pub async fn update_account_token(
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    token: String,
+) -> Result<Identity, CommandError> {
+    update_account_token_logic(
+        &state.http,
+        &*state.tokens,
+        &state.config,
+        &state.config_path,
+        &state.token_health,
+        &account_id,
+        token,
+    )
+    .await
 }
 
 /// Validate an http/https URL and open it in the default browser. Shared by the panel's
@@ -955,5 +1109,216 @@ mod tests {
         set_locale_logic(&cfg, &path, "fr").unwrap();
         assert_eq!(cfg.lock().unwrap().locale.as_deref(), Some("fr"));
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    fn account(id: &str, provider: ProviderKind, base_url: &str) -> Account {
+        Account {
+            id: id.into(),
+            label: "L".into(),
+            provider,
+            base_url: base_url.into(),
+            identity: Identity {
+                username: "old".into(),
+                name: None,
+                email: None,
+            },
+        }
+    }
+
+    #[test]
+    fn build_panel_projects_sets_auth_failed_from_health() {
+        let cfg = Config {
+            accounts: vec![account("a", ProviderKind::Gitlab, "https://gitlab.com")],
+            monitored: vec![MonitoredProject {
+                account_id: "a".into(),
+                project_id: 1,
+                name: "p".into(),
+                web_url: "http://x".into(),
+                remote_ref: None,
+            }],
+            ..Config::default()
+        };
+        let snapshot = HashMap::new();
+        let health = HashMap::from([(
+            "a".to_string(),
+            TokenHealthView {
+                auth_failed: true,
+                expires_at: None,
+            },
+        )]);
+        let rows = build_panel_projects(&cfg, &snapshot, &health);
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].auth_failed,
+            "dead-token account flags its project rows"
+        );
+    }
+
+    #[test]
+    fn build_token_health_joins_accounts_in_order() {
+        let cfg = Config {
+            accounts: vec![
+                account("a", ProviderKind::Gitlab, ""),
+                account("b", ProviderKind::Github, ""),
+            ],
+            ..Config::default()
+        };
+        let health = HashMap::from([(
+            "a".to_string(),
+            TokenHealthView {
+                auth_failed: false,
+                expires_at: Some("2026-08-15".into()),
+            },
+        )]);
+        let out = build_token_health(&cfg, &health);
+        assert_eq!(out.len(), 2);
+        let a = out.iter().find(|x| x.account_id == "a").unwrap();
+        assert_eq!(a.expires_at.as_deref(), Some("2026-08-15"));
+        assert!(!a.auth_failed);
+        // Account 'b' has no snapshot entry yet -> healthy defaults.
+        let b = out.iter().find(|x| x.account_id == "b").unwrap();
+        assert!(!b.auth_failed);
+        assert_eq!(b.expires_at, None);
+    }
+
+    #[tokio::test]
+    async fn update_account_token_replaces_token_and_clears_health() {
+        let server = MockServer::start().await;
+        // The NEW token validates via GitLab /user.
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .and(header("PRIVATE-TOKEN", "new-tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "alice", "name": "Alice", "email": null
+            })))
+            .mount(&server)
+            .await;
+
+        let path = temp_path("upd-ok");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acc-1", "old-tok").unwrap();
+        let cfg = Mutex::new(Config {
+            accounts: vec![account("acc-1", ProviderKind::Gitlab, &server.uri())],
+            ..Config::default()
+        });
+        // The poller had flagged this account dead; updating must clear that.
+        let health = Mutex::new(HashMap::from([(
+            "acc-1".to_string(),
+            TokenHealthView {
+                auth_failed: true,
+                expires_at: None,
+            },
+        )]));
+
+        let id = update_account_token_logic(
+            &build_http_client(),
+            &tokens,
+            &cfg,
+            &path,
+            &health,
+            "acc-1",
+            "new-tok".into(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(id.username, "alice");
+        // Keychain overwritten: a subsequent read returns the NEW token (cache write-through).
+        assert_eq!(tokens.get("acc-1").unwrap().unwrap().expose(), "new-tok");
+        // Stored identity refreshed and persisted with no token in the file.
+        assert_eq!(cfg.lock().unwrap().accounts[0].identity.username, "alice");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("new-tok"), "token leaked into config file");
+        // Auth-failed state cleared so the UI shows recovery immediately.
+        assert!(!health.lock().unwrap().contains_key("acc-1"));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn update_account_token_invalid_keeps_old_token_and_does_not_leak() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let path = temp_path("upd-bad");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acc-1", "old-tok").unwrap();
+        let cfg = Mutex::new(Config {
+            accounts: vec![account("acc-1", ProviderKind::Gitlab, &server.uri())],
+            ..Config::default()
+        });
+        let health = Mutex::new(HashMap::new());
+
+        let err = update_account_token_logic(
+            &build_http_client(),
+            &tokens,
+            &cfg,
+            &path,
+            &health,
+            "acc-1",
+            "super-secret-bad".into(),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.kind, CommandErrorKind::Unauthorized);
+        // The old token is untouched on a failed update.
+        assert_eq!(tokens.get("acc-1").unwrap().unwrap().expose(), "old-tok");
+        // The error returned to the frontend must not contain the attempted token.
+        assert!(
+            !err.message.contains("super-secret-bad"),
+            "token leaked into error message"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_account_token_rolls_back_token_when_save_fails() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "alice", "name": null, "email": null
+            })))
+            .mount(&server)
+            .await;
+
+        // Force config save to fail: the parent path is an existing FILE, so create_dir_all (inside
+        // config::save) fails AFTER the keychain overwrite, exercising the rollback path.
+        let base = std::env::temp_dir().join(format!("cimon-upd-rb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::write(&base, "not a dir").unwrap();
+        let bad_path = base.join("config.json");
+
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acc-1", "old-tok").unwrap();
+        let cfg = Mutex::new(Config {
+            accounts: vec![account("acc-1", ProviderKind::Gitlab, &server.uri())],
+            ..Config::default()
+        });
+        let health = Mutex::new(HashMap::new());
+
+        let err = update_account_token_logic(
+            &build_http_client(),
+            &tokens,
+            &cfg,
+            &bad_path,
+            &health,
+            "acc-1",
+            "new-tok".into(),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.kind, CommandErrorKind::Storage);
+        // Transactional: a persistence failure restores the prior token and identity, so the user
+        // is not left with a silently-changed credential after a reported failure.
+        assert_eq!(tokens.get("acc-1").unwrap().unwrap().expose(), "old-tok");
+        assert_eq!(cfg.lock().unwrap().accounts[0].identity.username, "old");
+        std::fs::remove_file(&base).ok();
     }
 }
