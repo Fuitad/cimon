@@ -127,18 +127,12 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   return { text: t("panel.summaryProjects", { count: total }), tone: "muted" };
 }
 
-/** Version plus the running binary's build time (e.g. "v0.1.0, built Jun 24 14:42"), so two builds
- *  that share a version are still distinguishable. The build time is omitted when unavailable. */
+/** Version plus the short commit SHA the running binary was built from (e.g. "v0.1.0 · abcdef1"),
+ *  so two builds that share a version are still distinguishable. The SHA is omitted when unavailable. */
 function versionLabel(info: AppInfo): string {
   const v = info.version === "dev" ? "dev" : `v${info.version}`;
-  if (info.built_at_ms == null) return v;
-  const built = new Date(info.built_at_ms).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return `${v} · ${built}`;
+  if (!info.commit) return v;
+  return `${v} · ${info.commit}`;
 }
 
 function Panel() {

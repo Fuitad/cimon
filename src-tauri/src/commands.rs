@@ -554,27 +554,25 @@ pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), Comman
 }
 
 /// App version and build identity, shown in the panel footer so it is obvious which build is
-/// running. The version alone is static across rebuilds, so the build time disambiguates them.
+/// running. The version alone is static across rebuilds, so the commit SHA disambiguates them.
 #[derive(Debug, Clone, Serialize)]
 pub struct AppInfo {
     pub version: String,
-    /// The running binary's modification time as epoch milliseconds (set when it was built, so it
-    /// changes every build), or `None` if it cannot be read.
-    pub built_at_ms: Option<u64>,
+    /// The short commit SHA the running binary was built from (captured by `build.rs`), or `None`
+    /// when it was built outside a git checkout.
+    pub commit: Option<String>,
 }
 
-/// Return the app version and the running binary's build time for the panel's build indicator.
+/// Return the app version and the commit SHA it was built from for the panel's build indicator.
 #[tauri::command]
 pub fn app_info() -> AppInfo {
-    let built_at_ms = std::env::current_exe()
-        .and_then(std::fs::metadata)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64);
+    let commit = option_env!("CIMON_GIT_SHA")
+        .map(str::trim)
+        .filter(|sha| !sha.is_empty())
+        .map(str::to_string);
     AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        built_at_ms,
+        commit,
     }
 }
 

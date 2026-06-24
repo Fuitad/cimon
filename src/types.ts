@@ -91,8 +91,8 @@ export interface PanelProject {
 /** App version and build identity, for confirming which build is running. Mirrors Rust `AppInfo`. */
 export interface AppInfo {
   version: string;
-  /** Build time as epoch milliseconds (the running binary's mtime), or `null` if unavailable. */
-  built_at_ms: number | null;
+  /** Short commit SHA the running binary was built from, or `null` when built outside a git checkout. */
+  commit: string | null;
 }
 
 export type CommandErrorKind =
