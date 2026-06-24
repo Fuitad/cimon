@@ -202,6 +202,17 @@ impl Default for NotificationRules {
     }
 }
 
+/// User-selected color theme for the app windows. `System` follows the OS appearance
+/// (`prefers-color-scheme`); `Light`/`Dark` force the palette regardless of the OS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Persisted, non-secret configuration. Tokens are NEVER stored here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -214,6 +225,8 @@ pub struct Config {
     /// Active UI/notification locale. `None` means "follow the OS, else English".
     /// Single source of truth shared by the Rust core and the frontend.
     pub locale: Option<String>,
+    /// Color theme for the app windows. Defaults to following the OS.
+    pub ui_mode: UiMode,
     /// Whether the one-time "CIMon is running in your menu bar" notice has been shown. Set the
     /// first time the app starts hidden (accounts configured) so the notice never nags again.
     pub menu_bar_notice_shown: bool,
@@ -228,6 +241,7 @@ impl Default for Config {
             poll_interval_secs: DEFAULT_POLL_SECS,
             launch_at_login: false,
             locale: None,
+            ui_mode: UiMode::System,
             menu_bar_notice_shown: false,
         }
     }
@@ -406,6 +420,20 @@ mod tests {
         // The menu-bar notice flag defaults off for a config that predates it, so an existing
         // user sees the notice once on their next hidden launch rather than never.
         assert!(!old.menu_bar_notice_shown);
+    }
+
+    #[test]
+    fn config_ui_mode_roundtrips_and_defaults_system() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.ui_mode, UiMode::System);
+        cfg.ui_mode = UiMode::Dark;
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"ui_mode\":\"dark\""));
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ui_mode, UiMode::Dark);
+        // A config written before the ui_mode field still loads and defaults to following the OS.
+        let old: Config = serde_json::from_str(r#"{"poll_interval_secs":30}"#).unwrap();
+        assert_eq!(old.ui_mode, UiMode::System);
     }
 
     #[test]

@@ -55,6 +55,18 @@ pub fn run() {
                 }
             }
 
+            // Apply the persisted UI mode to the settings window's native chrome before it is
+            // shown, so a forced light/dark theme is in place from the first paint.
+            {
+                let ui_mode = app
+                    .state::<commands::AppState>()
+                    .config
+                    .lock()
+                    .unwrap()
+                    .ui_mode;
+                window::apply_theme(app.handle(), ui_mode);
+            }
+
             // Build the tray (reads the applied locale + monitored set).
             let tray = tray::build_tray(app.handle())?;
 
@@ -178,6 +190,7 @@ pub fn run() {
             commands::set_notification_rules,
             commands::set_poll_interval,
             commands::set_locale,
+            commands::set_ui_mode,
             commands::set_launch_at_login,
             commands::get_project_statuses,
             commands::open_project_url,

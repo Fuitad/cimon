@@ -8,10 +8,31 @@
 //! The dock-icon concept is macOS-only (`NSApplicationActivationPolicy`); on Windows/Linux the
 //! activation-policy calls are compiled out and only the window show/hide remains.
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Theme};
+
+use crate::model::UiMode;
 
 /// Label of the single settings window (see `tauri.conf.json`).
 pub const MAIN: &str = "main";
+
+/// Map the user's UI mode to a native window theme override (`None` follows the OS).
+fn theme_override(mode: UiMode) -> Option<Theme> {
+    match mode {
+        UiMode::System => None,
+        UiMode::Light => Some(Theme::Light),
+        UiMode::Dark => Some(Theme::Dark),
+    }
+}
+
+/// Apply the chosen UI mode to the settings window's native chrome (the titlebar/decorations) so a
+/// forced light/dark app does not show an OS-colored titlebar above themed content. The webview
+/// content itself is themed by the frontend via a `data-theme` attribute + CSS; this only keeps the
+/// native decorations in step. The popover panel is borderless, so it needs no native theme.
+pub fn apply_theme(app: &AppHandle, mode: UiMode) {
+    if let Some(window) = app.get_webview_window(MAIN) {
+        let _ = window.set_theme(theme_override(mode));
+    }
+}
 
 /// Show the settings window, focus it, and (macOS) reveal the dock icon.
 pub fn show_main(app: &AppHandle) {

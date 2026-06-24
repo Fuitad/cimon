@@ -22,7 +22,11 @@
     "pollIntervalHint": "Fréquence de vérification des changements.",
     "seconds": "s",
     "launchAtLogin": "Lancer à l'ouverture de session",
-    "launchAtLoginError": "Impossible de modifier le réglage de lancement à l'ouverture de session."
+    "launchAtLoginError": "Impossible de modifier le réglage de lancement à l'ouverture de session.",
+    "appearance": "Apparence",
+    "appearanceSystem": "Système",
+    "appearanceLight": "Clair",
+    "appearanceDark": "Sombre"
   },
   "language": {
     "en": "English",

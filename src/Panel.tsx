@@ -12,6 +12,7 @@ import {
   setPanelHeight,
   showSettingsWindow,
 } from "./api";
+import { applyUiMode } from "./theme";
 import type { PanelProject } from "./types";
 import "./Panel.css";
 
@@ -148,6 +149,7 @@ function Panel() {
       .then((cfg) => {
         setAccountCount(cfg.accounts.length);
         if (cfg.locale) void i18n.changeLanguage(cfg.locale);
+        applyUiMode(cfg.ui_mode);
       })
       .catch(() => setAccountCount(null));
   }, [i18n]);

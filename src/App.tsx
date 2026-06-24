@@ -5,6 +5,7 @@ import AccountsSection from "./components/AccountsSection";
 import ProjectsSection from "./components/ProjectsSection";
 import SettingsSection from "./components/SettingsSection";
 import { getConfig, listAccounts } from "./api";
+import { applyUiMode } from "./theme";
 import type { Account } from "./types";
 import "./App.css";
 
@@ -26,16 +27,17 @@ function App() {
 
   useEffect(reloadAccounts, [reloadAccounts]);
 
-  // The Rust core's Config.locale is the source of truth; adopt it on startup.
+  // The Rust core's Config is the source of truth for locale and theme; adopt both on startup.
   useEffect(() => {
     getConfig()
       .then((cfg) => {
         if (cfg.locale) {
           void i18n.changeLanguage(cfg.locale);
         }
+        applyUiMode(cfg.ui_mode);
       })
       .catch(() => {
-        /* running outside the Tauri shell: keep the default language */
+        /* running outside the Tauri shell: keep the defaults */
       });
   }, [i18n]);
 
