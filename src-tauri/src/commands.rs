@@ -325,15 +325,41 @@ pub struct AppState {
     pub project_status: Arc<Mutex<HashMap<ProjectKey, ProjectStatusView>>>,
 }
 
+/// A dev-only file-backed token store, or `None` to fall back to the OS keychain.
+///
+/// Returns `Some` only on a developer build (a debug build, or one built with the `dev-tokens`
+/// feature) when a `dev-tokens.json` exists next to the config. The plaintext file spares local
+/// unsigned/ad-hoc builds the keychain's per-rebuild re-auth prompt. The whole path is compiled out
+/// of distributed builds (default features, release profile) by the variant below, so a planted
+/// file can never silently downgrade a real user from the keychain to plaintext token storage.
+#[cfg(any(debug_assertions, feature = "dev-tokens"))]
+fn dev_token_store(config_dir: &Path) -> Option<Box<dyn TokenStore>> {
+    use crate::secrets::FileTokenStore;
+    let dev_tokens = config_dir.join("dev-tokens.json");
+    dev_tokens
+        .exists()
+        .then(|| Box::new(FileTokenStore::new(dev_tokens)) as Box<dyn TokenStore>)
+}
+
+/// Distributed builds never consult a dev-tokens file: they always use the OS keychain.
+#[cfg(not(any(debug_assertions, feature = "dev-tokens")))]
+fn dev_token_store(_config_dir: &Path) -> Option<Box<dyn TokenStore>> {
+    None
+}
+
 impl AppState {
     /// Build state from the app config directory: load config, apply its locale, and set up the
-    /// HTTP client and keychain store.
+    /// HTTP client and token store.
     pub fn bootstrap(config_dir: PathBuf) -> Self {
         let config_path = config_dir.join("config.json");
         let cfg = config::load(&config_path);
         i18n::apply(&cfg);
-        let tokens: Arc<dyn TokenStore> =
-            Arc::new(CachingTokenStore::new(Box::new(KeyringStore::new())));
+        // A developer build may read tokens from a plaintext `dev-tokens.json` next to the config
+        // instead of the OS keychain (see `dev_token_store`), so local unsigned/ad-hoc builds are
+        // not re-prompted for keychain access on every rebuild. Distributed builds compile that path
+        // out and always use the keychain.
+        let inner = dev_token_store(&config_dir).unwrap_or_else(|| Box::new(KeyringStore::new()));
+        let tokens: Arc<dyn TokenStore> = Arc::new(CachingTokenStore::new(inner));
         AppState {
             config: Arc::new(Mutex::new(cfg)),
             http: build_http_client(),

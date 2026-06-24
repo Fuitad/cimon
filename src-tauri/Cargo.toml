@@ -19,6 +19,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# Read CI tokens from a plaintext `dev-tokens.json` (next to the config) instead of the OS keychain,
+# so local unsigned/ad-hoc builds don't re-prompt for keychain access on every rebuild. Auto-enabled
+# for debug builds (`tauri dev`); pass `--features dev-tokens` for a local packaged build. NEVER
+# enable for distributed builds: it stores tokens in the clear. CI ships with default features, so
+# the whole plaintext path is compiled out of release binaries.
+dev-tokens = []
+
 [dependencies]
 # `macos-private-api` enables the transparent panel window (rounded-corner popover); it pairs with
 # `app.macOSPrivateApi: true` in tauri.conf.json. `tray-icon` powers the menu-bar/tray presence.
