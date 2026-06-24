@@ -20,10 +20,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `macos-private-api` enables the transparent panel window (rounded-corner popover); it pairs with
+# `app.macOSPrivateApi: true` in tauri.conf.json. `tray-icon` powers the menu-bar/tray presence.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
+# Tray-relative window positioning for the click-to-open popover panel. The `tray-icon` feature
+# caches the tray icon rect from `on_tray_event` so `move_window(Position::TrayCenter)` anchors the
+# panel under (macOS) / above (Windows) the icon, handling DPI and multi-monitor work areas.
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

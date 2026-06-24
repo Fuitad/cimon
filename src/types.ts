@@ -54,6 +54,36 @@ export interface DiscoveredProject {
   remote_ref?: string | null;
 }
 
+/** Normalized pipeline status, mirroring Rust `PipelineStatus` (serde snake_case). */
+export type PipelineStatusKind =
+  | "running"
+  | "success"
+  | "failed"
+  | "canceled"
+  | "skipped"
+  | "pending"
+  | "manual"
+  | "other";
+
+/** A monitored project joined with its latest status, for the tray popover panel. Mirrors the Rust
+ *  `PanelProject` DTO returned by `get_project_statuses`. */
+export interface PanelProject {
+  account_id: string;
+  account_label: string;
+  provider: ProviderKind;
+  base_url: string;
+  project_id: number;
+  name: string;
+  web_url: string;
+  /** `null` until the first poll observes this project (a neutral "checking" row). */
+  status: PipelineStatusKind | null;
+  branch: string;
+  /** Latest pipeline `updated_at` (RFC3339), or `null` when never polled. Rendered relative. */
+  updated_at: string | null;
+  /** `true` when the most recent poll failed: status/branch are last-known, shown as offline. */
+  stale: boolean;
+}
+
 export type CommandErrorKind =
   | "unauthorized"
   | "invalid_base_url"

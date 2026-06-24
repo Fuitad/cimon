@@ -1,0 +1,342 @@
+/* CIMon tray popover panel. Shares tokens with the settings window via tokens.css. The window is
+   transparent and borderless; the rounded card and its shadow are drawn here, not by the OS. */
+
+@import "./tokens.css";
+
+/* Transparent window: the visible surface is the .panel card, not the body. */
+html,
+body {
+  background: transparent;
+}
+body {
+  overflow: hidden;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#root {
+  height: 100%;
+}
+
+/* Fills the whole (transparent) window. Its padding is the room for the card's shadow AND the
+   click target for dismissing the panel when the user clicks in the margin around the card. */
+.panel-root {
+  height: 100%;
+  padding: var(--space-3);
+}
+
+.panel__content {
+  display: block;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 2 * var(--space-3));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+/* ---- Header -------------------------------------------------------------------------------- */
+
+.panel__header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.panel__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.panel__brand img {
+  display: block;
+  border-radius: 4px;
+}
+.panel__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 550;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.panel__summary-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+.panel__summary-dot--ok {
+  background: var(--status-ok);
+}
+.panel__summary-dot--running {
+  background: var(--status-running);
+}
+.panel__summary-dot--pending {
+  background: var(--status-pending);
+}
+.panel__summary-dot--danger {
+  background: var(--danger);
+}
+
+/* ---- Body / list --------------------------------------------------------------------------- */
+
+.panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.panel__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.panel__group:not(:first-child) {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.panel__group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+}
+.prow:hover {
+  background: var(--surface-2);
+}
+.prow:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+/* A failed pipeline gets a faint full-row tint (never a side stripe) so failures read at a glance. */
+.prow--failed {
+  background: color-mix(in oklch, var(--danger) 7%, transparent);
+}
+.prow--failed:hover {
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+}
+
+.prow__dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+.prow__dot--success {
+  background: var(--status-ok);
+}
+.prow__dot--running {
+  background: var(--status-running);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--status-running) 22%, transparent);
+  animation: cimon-pulse 1.6s var(--ease-out) infinite;
+}
+.prow__dot--pending {
+  background: var(--status-pending);
+}
+.prow__dot--failed {
+  background: var(--danger);
+}
+.prow__dot--unknown,
+.prow__dot--stale {
+  background: var(--ink-faint);
+}
+
+@keyframes cimon-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.prow__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.prow__name {
+  font-size: 0.8125rem;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prow__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 0.6875rem;
+  color: var(--ink-muted);
+}
+.prow__branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prow__status {
+  flex: none;
+}
+.prow__time {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Empty / CTA --------------------------------------------------------------------------- */
+
+.panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+}
+.panel__empty-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.panel__empty-body {
+  max-width: 34ch;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+.panel__cta {
+  margin-top: var(--space-1);
+  height: 30px;
+  padding: 0 var(--space-4);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+}
+.panel__cta:hover {
+  background: var(--accent-hover);
+}
+.panel__cta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ---- Footer -------------------------------------------------------------------------------- */
+
+.panel__footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.pbtn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 550;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+.pbtn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.pbtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+.pbtn--quit {
+  margin-left: auto;
+}
+
+/* ---- Forced colors (Windows high-contrast) ------------------------------------------------- */
+@media (forced-colors: active) {
+  .panel {
+    border: 1px solid CanvasText;
+  }
+  .prow__dot {
+    background: CanvasText;
+  }
+  .prow:focus-visible,
+  .pbtn:focus-visible,
+  .panel__cta:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+    box-shadow: none;
+  }
+}
+
+/* ---- Reduced motion ------------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .prow__dot--running {
+    animation: none;
+  }
+}

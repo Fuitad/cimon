@@ -3,6 +3,7 @@ mod config;
 mod i18n;
 mod model;
 mod notify;
+mod panel;
 mod poller;
 mod provider;
 mod secrets;
@@ -21,6 +22,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Tray-relative positioning for the popover panel; pairs with `on_tray_event` in tray.rs.
+        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -54,6 +57,23 @@ pub fn run() {
 
             // Build the tray (reads the applied locale + monitored set).
             let tray = tray::build_tray(app.handle())?;
+
+            // Build the popover panel (hidden) that left-clicking the tray opens. Created up front
+            // so the webview is warm and opening is instant; it dismisses on blur (clicking away).
+            let panel_win = panel::build_panel(app.handle())?;
+            {
+                let app_handle = app.handle().clone();
+                panel_win.on_window_event(move |event| match event {
+                    // Clicking outside the panel blurs it -> hide (the menu-bar dismiss behavior).
+                    tauri::WindowEvent::Focused(false) => panel::hide(&app_handle),
+                    // It is borderless with no close button, but guard Cmd/Ctrl+W: hide, don't close.
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        panel::hide(&app_handle);
+                    }
+                    _ => {}
+                });
+            }
 
             // First-run UX: show the settings window when there are no accounts yet, otherwise
             // start hidden as a quiet menu-bar app. Window visibility drives the macOS dock icon
@@ -130,15 +150,16 @@ pub fn run() {
                         }
                     },
                     move |status, snapshot| {
-                        // Publish the per-project snapshot to shared state BEFORE rebuilding the
-                        // menu, in a scoped lock so the write is released before refresh_menu reads
-                        // it. The tray reads this map to render each project's status row.
+                        // Publish the per-project snapshot to shared state in a scoped lock (the
+                        // write is released before anything reads it). The panel reads this map via
+                        // the get_project_statuses command; the tray glyph reflects the aggregate.
                         {
                             let state = app_for_tray.state::<commands::AppState>();
                             *state.project_status.lock().unwrap() = snapshot.clone();
                         }
                         tray::set_status(&tray_for_status, status);
-                        let _ = tray::refresh_menu(&app_for_tray, &tray_for_status);
+                        // Nudge an open panel to re-fetch the fresh snapshot (cheap when closed).
+                        panel::notify_changed(&app_for_tray);
                     },
                 )
                 .await;
@@ -158,6 +179,12 @@ pub fn run() {
             commands::set_poll_interval,
             commands::set_locale,
             commands::set_launch_at_login,
+            commands::get_project_statuses,
+            commands::open_project_url,
+            commands::show_settings_window,
+            commands::quit_app,
+            commands::hide_panel,
+            commands::set_panel_height,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

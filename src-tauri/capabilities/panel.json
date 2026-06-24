@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "panel",
+  "description": "Capability for the tray popover panel window. It invokes app commands (status fetch, open URL, show settings, quit, resize) and listens for the status-updated event; URL opening and quitting are handled in Rust, so the panel itself needs only the core defaults.",
+  "windows": ["panel"],
+  "permissions": ["core:default"]
+}

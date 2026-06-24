@@ -12,13 +12,17 @@ use crate::secrets::TokenStore;
 /// project id is only unique within its instance/account, hence the account in the key.
 pub type ProjectKey = (String, u64);
 
-/// A per-project status view for the tray rows: the latest pipeline's normalized status and its
-/// branch. Built from [`PollState`] and handed to the tray each poll tick so each monitored
-/// project can show a colored indicator plus its current branch and status word.
+/// A per-project status view for the popover panel rows: the latest pipeline's normalized status,
+/// its branch, and when it last changed. Built from [`PollState`] and handed to the panel (via a
+/// command + a per-tick event) so each monitored project can show a colored indicator plus its
+/// current branch, status word, and a relative "updated N ago" time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectStatusView {
     pub status: PipelineStatus,
     pub branch: String,
+    /// The latest pipeline's `updated_at` (RFC3339 from the provider). The panel renders this as a
+    /// relative time; an unparseable value is simply not shown.
+    pub updated_at: String,
     /// `true` when this project's most recent poll attempt FAILED: the status/branch are the last
     /// known good values (kept so a transient blip doesn't blank the row), but no longer fresh.
     pub stale: bool,
@@ -198,6 +202,7 @@ impl PollState {
                     ProjectStatusView {
                         status: p.status,
                         branch: p.ref_.clone(),
+                        updated_at: p.updated_at.clone(),
                         stale: self.stale.contains(k),
                     },
                 )
@@ -751,6 +756,10 @@ mod tests {
             .expect("project a present in snapshot");
         assert_eq!(a.status, PipelineStatus::Running);
         assert_eq!(a.branch, "main");
+        assert_eq!(
+            a.updated_at, "2026-06-20T00:00:00Z",
+            "the latest pipeline's updated_at is surfaced for the relative-time row"
+        );
         let b = snap
             .get(&("acct".to_string(), 20))
             .expect("project b present in snapshot");

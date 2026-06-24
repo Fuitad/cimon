@@ -15,8 +15,8 @@ use url::Url;
 use crate::config;
 use crate::i18n;
 use crate::model::{
-    Account, Config, Identity, MonitoredProject, NotificationRules, ProviderKind, MAX_POLL_SECS,
-    MIN_POLL_SECS,
+    Account, Config, Identity, MonitoredProject, NotificationRules, PipelineStatus, ProviderKind,
+    MAX_POLL_SECS, MIN_POLL_SECS,
 };
 use crate::poller::{ProjectKey, ProjectStatusView};
 use crate::provider::{
@@ -276,6 +276,30 @@ async fn list_discovered_logic(
     Ok(provider.list_projects().await?)
 }
 
+/// A monitored project joined with its latest status, for the tray popover panel. The panel
+/// fetches a `Vec<PanelProject>` (one per monitored project, in config order) via
+/// [`get_project_statuses`] and refreshes on the `status-updated` event.
+#[derive(Debug, Clone, Serialize)]
+pub struct PanelProject {
+    pub account_id: String,
+    /// The account's user-given label (may be empty; the panel falls back to provider/host).
+    pub account_label: String,
+    pub provider: ProviderKind,
+    /// The account's instance base URL, for a host fallback when the label is empty.
+    pub base_url: String,
+    pub project_id: u64,
+    pub name: String,
+    pub web_url: String,
+    /// `None` until the first poll observes this project (or when it has no current pipeline): the
+    /// panel renders that as a neutral "checking" row rather than a fabricated status.
+    pub status: Option<PipelineStatus>,
+    pub branch: String,
+    /// The latest pipeline's `updated_at` (RFC3339), or `None` when never polled. Rendered relative.
+    pub updated_at: Option<String>,
+    /// `true` when the most recent poll FAILED: status/branch are last-known, shown as offline.
+    pub stale: bool,
+}
+
 /// Shared application state managed by Tauri and used by all commands.
 ///
 /// `config` is an `Arc<Mutex<..>>` so the background poller (Task 11) can share the exact same
@@ -368,7 +392,9 @@ pub fn set_monitored_projects(
     projects: Vec<MonitoredProject>,
 ) -> Result<(), CommandError> {
     set_monitored_logic(&state.config, &state.config_path, &account_id, projects)?;
-    crate::tray::refresh(&app); // reflect the new monitored set in the tray menu now
+    // The tray menu no longer lists projects (they live in the popover panel), so nudge an open
+    // panel to re-fetch instead of rebuilding the menu.
+    crate::panel::notify_changed(&app);
     Ok(())
 }
 
@@ -417,6 +443,82 @@ pub fn set_launch_at_login(
         autostart.disable()
     };
     result.map_err(|e| CommandError::new(CommandErrorKind::Storage, e.to_string()))
+}
+
+/// Monitored projects joined with their latest status, for the tray popover panel. Returns one
+/// entry per monitored project in config order; a project not yet observed by the poller carries a
+/// `None` status (a "checking" row). The frontend groups by account when more than one exists.
+#[tauri::command]
+pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProject> {
+    let cfg = state.config.lock().unwrap();
+    let snapshot = state.project_status.lock().unwrap();
+    cfg.monitored
+        .iter()
+        .map(|mp| {
+            let acct = cfg.accounts.iter().find(|a| a.id == mp.account_id);
+            let view = snapshot.get(&(mp.account_id.clone(), mp.project_id));
+            PanelProject {
+                account_id: mp.account_id.clone(),
+                account_label: acct.map(|a| a.label.clone()).unwrap_or_default(),
+                provider: acct.map(|a| a.provider).unwrap_or(ProviderKind::Gitlab),
+                base_url: acct.map(|a| a.base_url.clone()).unwrap_or_default(),
+                project_id: mp.project_id,
+                name: mp.name.clone(),
+                web_url: mp.web_url.clone(),
+                status: view.map(|v| v.status),
+                branch: view.map(|v| v.branch.clone()).unwrap_or_default(),
+                updated_at: view.map(|v| v.updated_at.clone()),
+                stale: view.is_some_and(|v| v.stale),
+            }
+        })
+        .collect()
+}
+
+/// Open a monitored project's pipeline page in the default browser, then hide the panel. The URL
+/// comes from the panel (a monitored project's `web_url`), but it is invoked from the webview, so
+/// the scheme is validated here (http/https only) before handing it to the OS opener.
+#[tauri::command]
+pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+    let parsed = Url::parse(&url)
+        .map_err(|_| CommandError::new(CommandErrorKind::InvalidInput, "not a valid URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(CommandError::new(
+            CommandErrorKind::InvalidInput,
+            "URL must be http or https",
+        ));
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| CommandError::new(CommandErrorKind::Network, e.to_string()))?;
+    crate::panel::hide(&app);
+    Ok(())
+}
+
+/// Open the settings window (and reveal the macOS dock icon) and hide the panel.
+#[tauri::command]
+pub fn show_settings_window(app: tauri::AppHandle) {
+    crate::window::show_main(&app);
+    crate::panel::hide(&app);
+}
+
+/// Quit the application (the panel's Quit action; mirrors the tray fallback menu's Quit).
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Hide the panel (used by the panel's Escape key and after navigating away).
+#[tauri::command]
+pub fn hide_panel(app: tauri::AppHandle) {
+    crate::panel::hide(&app);
+}
+
+/// Resize the panel to fit its measured content height (clamped in `panel`), then re-anchor it.
+/// Called by the panel after it renders so the popover hugs its content yet caps and scrolls.
+#[tauri::command]
+pub fn set_panel_height(app: tauri::AppHandle, height: f64) {
+    crate::panel::set_height(&app, height);
 }
 
 #[cfg(test)]
