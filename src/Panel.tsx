@@ -45,6 +45,7 @@ function groupTitle(p: PanelProject): string {
 /** Status dot modifier. Stale (offline) and never-polled both read as neutral grey; the status
  *  word carries the precise state so status is never conveyed by color alone. */
 function dotClass(p: PanelProject): string {
+  if (p.auth_failed) return "auth-failed"; // dead token: distinct from offline/stale
   if (p.stale) return "stale";
   switch (p.status) {
     case "running":
@@ -64,6 +65,8 @@ function dotClass(p: PanelProject): string {
 /** Localized status word for a row. A project with no known status is either still being polled
  *  for the first time ("checking") or has only ever failed to reach the server ("can't connect"). */
 function statusWord(p: PanelProject, t: TFunction): string {
+  // A dead token takes precedence over the (now last-known) pipeline status and the offline state.
+  if (p.auth_failed) return t("panel.authFailed");
   if (p.status === null) return p.stale ? t("panel.unreachable") : t("panel.checking");
   return t(`status.${p.status}`);
 }
@@ -93,7 +96,12 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   let success = 0;
   let unreachable = 0; // never polled successfully and currently failing -> "can't connect"
   let checking = 0; // not polled yet (first poll in flight)
+  let authFailed = 0; // dead token -> not counted by its (last-known) status
   for (const p of projects) {
+    if (p.auth_failed) {
+      authFailed++;
+      continue; // a dead-token row's status is last-known, not a live signal
+    }
     switch (p.status) {
       case "failed":
         failed++;
@@ -118,6 +126,8 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   }
   const total = projects.length;
   if (failed > 0) return { text: t("panel.summaryFailing", { count: failed }), tone: "danger" };
+  if (authFailed > 0)
+    return { text: t("panel.summaryAuthFailed", { count: authFailed }), tone: "danger" };
   if (unreachable > 0)
     return { text: t("panel.summaryUnreachable", { count: unreachable }), tone: "muted" };
   if (running > 0) return { text: t("panel.summaryRunning", { count: running }), tone: "running" };
@@ -238,7 +248,8 @@ function Panel() {
 
   const renderRow = (p: PanelProject) => {
     const rel = relativeTime(p.updated_at, now, t);
-    const failed = p.status === "failed" && !p.stale;
+    // A dead-token row keeps its last-known status but must not read as a live pipeline failure.
+    const failed = p.status === "failed" && !p.stale && !p.auth_failed;
     return (
       <li key={`${p.account_id}:${p.project_id}`}>
         <button
@@ -254,7 +265,7 @@ function Panel() {
               {p.branch && <span className="prow__branch mono">{p.branch}</span>}
               <span className="prow__status">
                 {statusWord(p, t)}
-                {p.stale && p.status !== null ? ` · ${t("panel.offline")}` : ""}
+                {p.stale && p.status !== null && !p.auth_failed ? ` · ${t("panel.offline")}` : ""}
               </span>
               {rel && <span className="prow__time">{rel}</span>}
             </span>

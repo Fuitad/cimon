@@ -1,18 +1,96 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
-import { addAccount, removeAccount } from "../api";
-import { asCommandError, type Account, type CommandError, type ProviderKind } from "../types";
+import { addAccount, getTokenHealth, removeAccount, updateAccountToken } from "../api";
+import {
+  asCommandError,
+  type Account,
+  type AccountTokenHealth,
+  type CommandError,
+  type ProviderKind,
+} from "../types";
 
-/** Default instance URL per provider, applied when the provider selector changes. */
-const DEFAULT_INSTANCE: Record<ProviderKind, string> = {
-  gitlab: "https://gitlab.com",
-  github: "https://github.com",
-};
+/** Selectable provider option in the form. The hosted SaaS variants (`gitlab`, `github`) use a
+ *  fixed base URL and hide the Instance URL field; the self-hosted variants show it. They all map
+ *  back to one of the two backend `ProviderKind`s -- the github.com vs Enterprise (and gitlab.com
+ *  vs self-managed) distinction is carried entirely by the base URL. */
+type FormProvider = "gitlab" | "gitlab_self_managed" | "github" | "github_enterprise";
+
+interface ProviderOption {
+  value: FormProvider;
+  /** Label shown in the selector (product brand name, intentionally not translated). */
+  optionLabel: string;
+  /** Backend provider this maps to. */
+  kind: ProviderKind;
+  /** Whether the Instance URL field is shown and editable (self-hosted variants). */
+  showsUrl: boolean;
+  /** Fixed base URL for SaaS variants; "" for self-hosted (the user supplies it). */
+  fixedUrl: string;
+  /** Placeholder shown in the Instance URL field for self-hosted variants. */
+  urlPlaceholder?: string;
+}
+
+/** Ordered provider options for the selector. */
+const PROVIDER_OPTIONS: ProviderOption[] = [
+  {
+    value: "gitlab",
+    optionLabel: "GitLab",
+    kind: "gitlab",
+    showsUrl: false,
+    fixedUrl: "https://gitlab.com",
+  },
+  {
+    value: "gitlab_self_managed",
+    optionLabel: "GitLab Self-Managed",
+    kind: "gitlab",
+    showsUrl: true,
+    fixedUrl: "",
+    urlPlaceholder: "https://gitlab.example.com",
+  },
+  {
+    value: "github",
+    optionLabel: "GitHub",
+    kind: "github",
+    showsUrl: false,
+    fixedUrl: "https://github.com",
+  },
+  {
+    value: "github_enterprise",
+    optionLabel: "GitHub Enterprise",
+    kind: "github",
+    showsUrl: true,
+    fixedUrl: "",
+    urlPlaceholder: "https://github.example.com",
+  },
+];
+
 const TOKEN_PLACEHOLDER: Record<ProviderKind, string> = {
   gitlab: "glpat-...",
   github: "ghp-...",
 };
+
+/** Whole UTC calendar days until `date` (a "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS UTC" provider
+ *  string). Negative once past, 0 on the expiry day. Both providers express expiry as a UTC date or
+ *  instant, so differencing the UTC day index ("expires on day X") is stable across the viewer's
+ *  timezone and never over-reports the way ceil() of a fractional 24h chunk does. Normalizes the
+ *  GitHub " UTC"/space form to an ISO string Date can parse. */
+function daysUntil(date: string): number {
+  const exp = Date.parse(date.replace(" UTC", "Z").replace(" ", "T"));
+  const dayMs = 86_400_000;
+  return Math.floor(exp / dayMs) - Math.floor(Date.now() / dayMs);
+}
+
+/** Localized "Expires in N days" / "Expires today" label for a known expiry date. */
+function expiryLabel(date: string, t: TFunction): string {
+  const d = daysUntil(date);
+  return d <= 0 ? t("accounts.expiresToday") : t("accounts.expiresInDays", { count: d });
+}
+
+/** Within the 72h (3-day) warning window. */
+function expiringSoon(date: string): boolean {
+  return daysUntil(date) <= 3;
+}
 
 interface AccountsSectionProps {
   accounts: Account[];
@@ -23,12 +101,35 @@ interface AccountsSectionProps {
 /** Add, list, and remove GitLab and GitHub accounts. Tokens are sent once and never read back. */
 function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) {
   const { t } = useTranslation();
-  const [provider, setProvider] = useState<ProviderKind>("gitlab");
-  const [instanceUrl, setInstanceUrl] = useState(DEFAULT_INSTANCE.gitlab);
+  const [provider, setProvider] = useState<FormProvider>("gitlab");
+  const [instanceUrl, setInstanceUrl] = useState("");
   const [label, setLabel] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CommandError | null>(null);
+  // Per-account token health (auth-failed + expiry), keyed by account id.
+  const [health, setHealth] = useState<Record<string, AccountTokenHealth>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [newToken, setNewToken] = useState("");
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState<CommandError | null>(null);
+
+  const option = PROVIDER_OPTIONS.find((p) => p.value === provider) ?? PROVIDER_OPTIONS[0];
+
+  // The poller updates token health each tick; refresh on mount, on window focus (the settings
+  // window gains focus when opened), and whenever the account list changes.
+  const refreshHealth = useCallback(() => {
+    getTokenHealth()
+      .then((list) => setHealth(Object.fromEntries(list.map((h) => [h.account_id, h]))))
+      .catch(() => setHealth({}));
+  }, []);
+
+  useEffect(() => {
+    refreshHealth();
+    const onFocus = () => refreshHealth();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshHealth, accounts]);
 
   const errorText = (err: CommandError): string => {
     switch (err.kind) {
@@ -48,9 +149,11 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     setBusy(true);
     setError(null);
     try {
+      // SaaS variants use their fixed host; self-hosted variants use the entered URL.
+      const baseUrl = option.showsUrl ? instanceUrl.trim() : option.fixedUrl;
       // Trim the token: a value pasted from a terminal or password manager often carries a
       // trailing newline or space, which would otherwise fail validation as an opaque "rejected".
-      await addAccount(provider, label.trim(), instanceUrl.trim(), token.trim());
+      await addAccount(option.kind, label.trim(), baseUrl, token.trim());
       setToken("");
       setLabel("");
       onAccountsChanged();
@@ -70,11 +173,38 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     }
   };
 
-  const onProviderChange = (next: ProviderKind) => {
+  const startEdit = (id: string) => {
+    setEditingId(id);
+    setNewToken("");
+    setUpdateError(null);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setNewToken("");
+    setUpdateError(null);
+  };
+  const onUpdateToken = async (id: string) => {
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      // Trim like the add form: pasted tokens often carry a trailing newline/space.
+      await updateAccountToken(id, newToken.trim());
+      setEditingId(null);
+      setNewToken("");
+      refreshHealth();
+      onAccountsChanged();
+    } catch (err) {
+      setUpdateError(asCommandError(err));
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const onProviderChange = (next: FormProvider) => {
     setProvider(next);
-    // Reset the instance URL to the newly-selected provider's default host (the previous value was
-    // the other provider's). The user can still edit it for a self-hosted GitLab/GHE host.
-    setInstanceUrl(DEFAULT_INSTANCE[next]);
+    // Clear the entered host when switching providers: the field is shown only for self-hosted
+    // variants, which always need a host the user supplies (SaaS variants use their fixed host).
+    setInstanceUrl("");
   };
 
   return (
@@ -86,25 +216,83 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
 
       {accounts.length > 0 && (
         <ul className="rows" aria-label={t("accounts.title")}>
-          {accounts.map((a) => (
-            <li className="row" key={a.id}>
-              <span className="dot dot--ok" aria-hidden="true" />
-              <div className="row__main">
-                <span className="row__title">{a.label || a.identity.username}</span>
-                <span className="row__meta">
-                  {t("accounts.connectedAs", { username: a.identity.username })}
-                  <span className="mono row__url">{a.base_url}</span>
-                </span>
-              </div>
-              <button
-                type="button"
-                className="btn btn--ghost btn--danger"
-                onClick={() => void onRemove(a.id)}
-              >
-                {t("common.remove")}
-              </button>
-            </li>
-          ))}
+          {accounts.map((a) => {
+            const h = health[a.id];
+            const editing = editingId === a.id;
+            return (
+              <li className="row" key={a.id}>
+                <span
+                  className={`dot ${h?.auth_failed ? "dot--danger" : "dot--ok"}`}
+                  aria-hidden="true"
+                />
+                <div className="row__main">
+                  <span className="row__title">{a.label || a.identity.username}</span>
+                  <span className="row__meta">
+                    {t("accounts.connectedAs", { username: a.identity.username })}
+                    <span className="mono row__url">{a.base_url}</span>
+                  </span>
+                  {h?.auth_failed ? (
+                    <span className="row__alert">{t("accounts.tokenInvalid")}</span>
+                  ) : (
+                    h?.expires_at && (
+                      <span
+                        className={`row__expiry${
+                          expiringSoon(h.expires_at) ? " row__expiry--warn" : ""
+                        }`}
+                      >
+                        {expiryLabel(h.expires_at, t)}
+                      </span>
+                    )
+                  )}
+                  {editing && (
+                    <div className="row__token-edit">
+                      <input
+                        className="input mono"
+                        type="password"
+                        value={newToken}
+                        placeholder={TOKEN_PLACEHOLDER[a.provider]}
+                        onChange={(e) => setNewToken(e.target.value)}
+                        autoComplete="off"
+                        aria-label={t("accounts.token")}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        disabled={updateBusy || newToken.trim().length === 0}
+                        onClick={() => void onUpdateToken(a.id)}
+                      >
+                        {updateBusy ? t("accounts.connecting") : t("accounts.save")}
+                      </button>
+                      <button type="button" className="btn btn--ghost" onClick={cancelEdit}>
+                        {t("accounts.cancel")}
+                      </button>
+                      {updateError && (
+                        <span className="alert alert--error" role="alert">
+                          {errorText(updateError)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="row__actions">
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => (editing ? cancelEdit() : startEdit(a.id))}
+                  >
+                    {t("accounts.updateToken")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--danger"
+                    onClick={() => void onRemove(a.id)}
+                  >
+                    {t("common.remove")}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -118,22 +306,28 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
             <select
               className="input"
               value={provider}
-              onChange={(e) => onProviderChange(e.target.value as ProviderKind)}
+              onChange={(e) => onProviderChange(e.target.value as FormProvider)}
             >
-              <option value="gitlab">GitLab</option>
-              <option value="github">GitHub</option>
+              {PROVIDER_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.optionLabel}
+                </option>
+              ))}
             </select>
           </label>
-          <label className="field">
-            <span className="field__label">{t("accounts.instanceUrl")}</span>
-            <input
-              className="input"
-              value={instanceUrl}
-              onChange={(e) => setInstanceUrl(e.target.value)}
-              spellCheck={false}
-              autoComplete="off"
-            />
-          </label>
+          {option.showsUrl && (
+            <label className="field">
+              <span className="field__label">{t("accounts.instanceUrl")}</span>
+              <input
+                className="input"
+                value={instanceUrl}
+                placeholder={option.urlPlaceholder}
+                onChange={(e) => setInstanceUrl(e.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </label>
+          )}
           <label className="field">
             <span className="field__label">{t("accounts.label")}</span>
             <input
@@ -151,12 +345,12 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
             className="input mono"
             type="password"
             value={token}
-            placeholder={TOKEN_PLACEHOLDER[provider]}
+            placeholder={TOKEN_PLACEHOLDER[option.kind]}
             onChange={(e) => setToken(e.target.value)}
             autoComplete="off"
           />
           <span className="field__hint">
-            {provider === "github" ? t("accounts.tokenHintGithub") : t("accounts.tokenHint")}
+            {option.kind === "github" ? t("accounts.tokenHintGithub") : t("accounts.tokenHint")}
           </span>
         </label>
 
@@ -170,7 +364,11 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
           <button
             type="submit"
             className="btn btn--primary"
-            disabled={busy || token.trim().length === 0 || instanceUrl.trim().length === 0}
+            disabled={
+              busy ||
+              token.trim().length === 0 ||
+              (option.showsUrl && instanceUrl.trim().length === 0)
+            }
           >
             {busy ? t("accounts.connecting") : t("accounts.connect")}
           </button>

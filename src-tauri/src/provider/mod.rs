@@ -78,6 +78,16 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+/// Token validity + expiry snapshot returned by [`Provider::token_health`]. A token that has
+/// gone dead (expired, revoked, invalid) is reported as `Err(ProviderError::Unauthorized)`, NOT
+/// a field here, so callers treat auth-failure uniformly with other auth paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenHealth {
+    /// Raw provider expiry string (GitHub `YYYY-MM-DD HH:MM:SS UTC`, GitLab `YYYY-MM-DD`), or
+    /// `None` when the token has no expiry or the provider cannot report one (old instance, etc.).
+    pub expires_at: Option<String>,
+}
+
 /// A project discovered via the provider API, surfaced to the selection UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiscoveredProject {
@@ -100,6 +110,12 @@ pub struct DiscoveredProject {
 pub trait Provider {
     /// Validate the configured token and resolve the authenticated identity.
     async fn validate_token(&self) -> Result<Identity, ProviderError>;
+
+    /// Report whether the token is still valid and, if known, when it expires. The authoritative
+    /// auth + expiry signal, run on a schedule by the poller and distinct from the per-project
+    /// polling path. A dead token is `Err(ProviderError::Unauthorized)`; a transient failure is
+    /// `Err(Http/Network)` (caller keeps prior state); `Ok` carries the expiry (possibly `None`).
+    async fn token_health(&self) -> Result<TokenHealth, ProviderError>;
 
     /// List the projects the token can access (for the monitor-selection UI).
     async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError>;
@@ -152,6 +168,13 @@ impl Provider for AnyProvider {
         match self {
             AnyProvider::Gitlab(p) => p.validate_token().await,
             AnyProvider::Github(p) => p.validate_token().await,
+        }
+    }
+
+    async fn token_health(&self) -> Result<TokenHealth, ProviderError> {
+        match self {
+            AnyProvider::Gitlab(p) => p.token_health().await,
+            AnyProvider::Github(p) => p.token_health().await,
         }
     }
 

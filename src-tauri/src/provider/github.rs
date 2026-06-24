@@ -9,7 +9,7 @@
 use serde::Deserialize;
 
 use crate::model::{Identity, Job, Pipeline, PipelineStatus};
-use crate::provider::{DiscoveredProject, Provider, ProviderError};
+use crate::provider::{DiscoveredProject, Provider, ProviderError, TokenHealth};
 use crate::secrets::SecretToken;
 
 const PER_PAGE: u32 = 100;
@@ -144,6 +144,27 @@ impl Provider for GithubProvider {
             name: u.name,
             email: u.email,
         })
+    }
+
+    async fn token_health(&self) -> Result<TokenHealth, ProviderError> {
+        let resp = self.get("/user").await?;
+        // Do NOT use classify() here: it maps 403 -> Unauthorized, but a GitHub 403 is a
+        // rate-limit / permission signal, NOT a dead token. Only 401 means the token is dead.
+        match resp.status().as_u16() {
+            200..=299 => {
+                // GitHub returns the token's expiry on every authenticated response (when the
+                // token has one). HeaderMap lookup is case-insensitive.
+                let expires_at = resp
+                    .headers()
+                    .get("github-authentication-token-expiration")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                Ok(TokenHealth { expires_at })
+            }
+            401 => Err(ProviderError::Unauthorized),
+            c => Err(ProviderError::Http(c)),
+        }
     }
 
     async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError> {
@@ -438,5 +459,71 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, ProviderError::Http(500));
+    }
+
+    #[tokio::test]
+    async fn token_health_reads_expiration_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/user"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        "GitHub-Authentication-Token-Expiration",
+                        "2026-08-15 14:23:01 UTC",
+                    )
+                    .set_body_json(serde_json::json!({"login": "octocat"})),
+            )
+            .mount(&server)
+            .await;
+
+        let health = provider(&server).token_health().await.unwrap();
+        assert_eq!(
+            health.expires_at.as_deref(),
+            Some("2026-08-15 14:23:01 UTC")
+        );
+    }
+
+    #[tokio::test]
+    async fn token_health_no_header_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/user"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"login": "octocat"})),
+            )
+            .mount(&server)
+            .await;
+
+        let health = provider(&server).token_health().await.unwrap();
+        assert_eq!(health.expires_at, None);
+    }
+
+    #[tokio::test]
+    async fn token_health_401_is_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/user"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let err = provider(&server).token_health().await.unwrap_err();
+        assert_eq!(err, ProviderError::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn token_health_403_is_http_not_unauthorized() {
+        // GitHub returns 403 for rate limiting; token_health must NOT treat it as a dead token
+        // (this is the bug the reviewers flagged: do not reuse classify() here).
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/user"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let err = provider(&server).token_health().await.unwrap_err();
+        assert_eq!(err, ProviderError::Http(403));
     }
 }

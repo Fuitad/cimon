@@ -7,7 +7,7 @@
 use serde::Deserialize;
 
 use crate::model::{Identity, Job, Pipeline, PipelineStatus};
-use crate::provider::{DiscoveredProject, Provider, ProviderError};
+use crate::provider::{DiscoveredProject, Provider, ProviderError, TokenHealth};
 use crate::secrets::SecretToken;
 
 const PER_PAGE: u32 = 100;
@@ -72,6 +72,22 @@ struct GlUser {
     email: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+/// The `/personal_access_tokens/self` introspection response (only the fields token_health needs).
+/// `active`/`revoked` default defensively so a future response that omits them is not read as dead.
+#[derive(Deserialize)]
+struct GlPatSelf {
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default = "default_true")]
+    active: bool,
+    #[serde(default)]
+    revoked: bool,
+}
+
 #[derive(Deserialize)]
 struct GlNamespace {
     full_path: String,
@@ -118,6 +134,28 @@ impl Provider for GitlabProvider {
             name: u.name,
             email: u.email,
         })
+    }
+
+    async fn token_health(&self) -> Result<TokenHealth, ProviderError> {
+        let resp = self.get("/personal_access_tokens/self").await?;
+        // Do NOT use classify() (it maps 403 -> Unauthorized). Here 401 = dead token;
+        // 403 (token lacks read_api scope to introspect itself) and 404 (endpoint absent on
+        // pre-16.0 instances) both mean "expiry unavailable but NOT dead" -> degrade to None;
+        // any other non-2xx is transient.
+        match resp.status().as_u16() {
+            200..=299 => {
+                let pat: GlPatSelf = resp.json().await.map_err(redact_json_err)?;
+                if pat.revoked || !pat.active {
+                    return Err(ProviderError::Unauthorized);
+                }
+                Ok(TokenHealth {
+                    expires_at: pat.expires_at,
+                })
+            }
+            401 => Err(ProviderError::Unauthorized),
+            403 | 404 => Ok(TokenHealth { expires_at: None }),
+            c => Err(ProviderError::Http(c)),
+        }
     }
 
     async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError> {
@@ -375,5 +413,83 @@ mod tests {
 
         let err = provider(&server).list_pipelines(7, None).await.unwrap_err();
         assert_eq!(err, ProviderError::Http(500));
+    }
+
+    #[tokio::test]
+    async fn token_health_self_returns_expiry() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .and(header("PRIVATE-TOKEN", "test-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "active": true, "revoked": false, "expires_at": "2026-08-15"
+            })))
+            .mount(&server)
+            .await;
+
+        let health = provider(&server).token_health().await.unwrap();
+        assert_eq!(health.expires_at.as_deref(), Some("2026-08-15"));
+    }
+
+    #[tokio::test]
+    async fn token_health_null_expiry_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "active": true, "revoked": false, "expires_at": null
+            })))
+            .mount(&server)
+            .await;
+
+        let health = provider(&server).token_health().await.unwrap();
+        assert_eq!(health.expires_at, None);
+    }
+
+    #[tokio::test]
+    async fn token_health_revoked_is_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "active": false, "revoked": true, "expires_at": "2020-01-01"
+            })))
+            .mount(&server)
+            .await;
+
+        let err = provider(&server).token_health().await.unwrap_err();
+        assert_eq!(err, ProviderError::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn token_health_401_is_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let err = provider(&server).token_health().await.unwrap_err();
+        assert_eq!(err, ProviderError::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn token_health_404_and_403_degrade_to_none() {
+        // Old instance (404) or scope-restricted token (403): expiry unavailable, but NOT dead.
+        for code in [404u16, 403] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/v4/personal_access_tokens/self"))
+                .respond_with(ResponseTemplate::new(code))
+                .mount(&server)
+                .await;
+
+            let health = provider(&server).token_health().await.unwrap();
+            assert_eq!(
+                health.expires_at, None,
+                "code {code} should degrade to Ok(None)"
+            );
+        }
     }
 }

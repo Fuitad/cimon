@@ -86,6 +86,19 @@ export interface PanelProject {
   updated_at: string | null;
   /** `true` when the most recent poll failed: status/branch are last-known, shown as offline. */
   stale: boolean;
+  /** `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
+   *  over `stale`: the row reads "authentication failed", not "offline". */
+  auth_failed: boolean;
+}
+
+/** Per-account token health for the settings UI. Mirrors the Rust `AccountTokenHealth` DTO returned
+ *  by `get_token_health`. */
+export interface AccountTokenHealth {
+  account_id: string;
+  auth_failed: boolean;
+  /** Raw provider expiry string (e.g. "2026-08-15" or "2026-08-15 14:23:01 UTC"), or `null` when
+   *  the token has no expiry / has not been checked yet. */
+  expires_at: string | null;
 }
 
 /** App version and build identity, for confirming which build is running. Mirrors Rust `AppInfo`. */

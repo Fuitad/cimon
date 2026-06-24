@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   Account,
+  AccountTokenHealth,
   AppInfo,
   Config,
   DiscoveredProject,
@@ -216,6 +217,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(4),
     stale: false,
+    auth_failed: false,
   },
   {
     account_id: "acc-1",
@@ -229,6 +231,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "feature/checkout-v2",
     updated_at: ago(0),
     stale: false,
+    auth_failed: false,
   },
   {
     account_id: "acc-1",
@@ -242,6 +245,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(12),
     stale: false,
+    auth_failed: false,
   },
   {
     account_id: "acc-1",
@@ -255,6 +259,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "release/2.1",
     updated_at: ago(1),
     stale: false,
+    auth_failed: false,
   },
   {
     account_id: "acc-1",
@@ -268,6 +273,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(180),
     stale: true,
+    auth_failed: false,
   },
   {
     account_id: "acc-1",
@@ -281,6 +287,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "",
     updated_at: null,
     stale: false,
+    auth_failed: false,
   },
 ];
 const PANEL_MULTI_FIXTURE: PanelProject[] = [
@@ -297,6 +304,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(7),
     stale: false,
+    auth_failed: false,
   },
   {
     account_id: "gh-1",
@@ -310,6 +318,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     branch: "fix/very-long-branch-name-for-truncation-testing",
     updated_at: ago(2),
     stale: false,
+    auth_failed: false,
   },
 ];
 
@@ -322,11 +331,44 @@ const PANEL_OFFLINE_FIXTURE: PanelProject[] = [
   PANEL_FIXTURE[5], // never polled yet (status null, not stale) -> "checking"
 ];
 
+// `?preview=tokenhealth` exercises the token-health states: one account with a dead token
+// (auth_failed, rendered distinct from offline) and one whose token expires in ~2 days (the warning
+// indicator + the inline re-entry flow). Drives the TS-001/002/003 E2E scenarios.
+const inDays = (days: number): string =>
+  new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+const TOKENHEALTH_ACCOUNTS: Account[] = [
+  {
+    id: "th-dead",
+    label: "Prod GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    identity: { username: "ci-bot", name: null, email: null },
+  },
+  {
+    id: "th-exp",
+    label: "GitHub",
+    provider: "github",
+    base_url: "https://github.com",
+    identity: { username: "octocat", name: "The Octocat", email: null },
+  },
+];
+const TOKENHEALTH_HEALTH: AccountTokenHealth[] = [
+  { account_id: "th-dead", auth_failed: true, expires_at: null },
+  { account_id: "th-exp", auth_failed: false, expires_at: inDays(2) },
+];
+const TOKENHEALTH_PANEL: PanelProject[] = [
+  { ...PANEL_FIXTURE[0], account_id: "th-dead", account_label: "Prod GitLab", auth_failed: true },
+  // A genuinely offline (stale) row on the same account, for visual contrast with auth_failed.
+  { ...PANEL_FIXTURE[4], account_id: "th-dead", account_label: "Prod GitLab" },
+  { ...PANEL_FIXTURE[2], account_id: "th-exp", account_label: "GitHub", provider: "github" },
+];
+
 export const getProjectStatuses = (): Promise<PanelProject[]> => {
   if (!PREVIEW) return invoke("get_project_statuses");
   if (previewEmpty()) return Promise.resolve([]);
   if (previewParam() === "multi") return Promise.resolve(PANEL_MULTI_FIXTURE);
   if (previewParam() === "offline") return Promise.resolve(PANEL_OFFLINE_FIXTURE);
+  if (previewParam() === "tokenhealth") return Promise.resolve(TOKENHEALTH_PANEL);
   return Promise.resolve(PANEL_FIXTURE);
 };
 
@@ -372,7 +414,34 @@ export const listAccounts = (): Promise<Account[]> => {
   if (previewEmpty()) return Promise.resolve([]);
   if (previewStress()) return Promise.resolve(STRESS_ACCOUNTS);
   if (previewGithub()) return Promise.resolve([GITHUB_FIXTURE_ACCOUNT]);
+  if (previewParam() === "tokenhealth") return Promise.resolve(TOKENHEALTH_ACCOUNTS);
   return Promise.resolve([FIXTURE_ACCOUNT]);
+};
+
+// Preview-only: accounts whose token was "updated" this session, so getTokenHealth reflects the
+// recovery in the UI (the real backend repopulates health from the next poll).
+const previewRecovered = new Set<string>();
+
+/** Per-account token health for the settings UI (auth-failed flag + expiry). */
+export const getTokenHealth = (): Promise<AccountTokenHealth[]> => {
+  if (!PREVIEW) return invoke("get_token_health");
+  if (previewParam() === "tokenhealth")
+    return Promise.resolve(
+      TOKENHEALTH_HEALTH.map((h) =>
+        previewRecovered.has(h.account_id) ? { ...h, auth_failed: false, expires_at: null } : h,
+      ),
+    );
+  return Promise.resolve([]);
+};
+
+/** Replace the token for an existing account in place (re-validated server-side). */
+export const updateAccountToken = (accountId: string, token: string): Promise<Identity> => {
+  if (PREVIEW) {
+    previewRecovered.add(accountId);
+    return Promise.resolve(TOKENHEALTH_ACCOUNTS[0].identity);
+  }
+  const args: { accountId: string; token: string } = { accountId, token };
+  return invoke("update_account_token", args);
 };
 
 export const listDiscoveredProjects = (accountId: string): Promise<DiscoveredProject[]> => {
