@@ -498,13 +498,13 @@ pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProje
         .collect()
 }
 
-/// Open a monitored project's pipeline page in the default browser, then hide the panel. The URL
-/// comes from the panel (a monitored project's `web_url`), but it is invoked from the webview, so
-/// the scheme is validated here (http/https only) before handing it to the OS opener.
-#[tauri::command]
-pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), CommandError> {
+/// Validate an http/https URL and open it in the default browser. Shared by the panel's
+/// `open_project_url` command and the clickable transition notifications (`notify`). URLs reach
+/// this from the webview or from a provider response, so the scheme is validated (http/https only)
+/// before handing it to the OS opener.
+pub(crate) fn open_external_url(app: &tauri::AppHandle, url: &str) -> Result<(), CommandError> {
     use tauri_plugin_opener::OpenerExt;
-    let parsed = Url::parse(&url)
+    let parsed = Url::parse(url)
         .map_err(|_| CommandError::new(CommandErrorKind::InvalidInput, "not a valid URL"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(CommandError::new(
@@ -513,8 +513,16 @@ pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), Comman
         ));
     }
     app.opener()
-        .open_url(url, None::<&str>)
+        .open_url(url.to_string(), None::<&str>)
         .map_err(|e| CommandError::new(CommandErrorKind::Network, e.to_string()))?;
+    Ok(())
+}
+
+/// Open a monitored project's pipeline page in the default browser, then hide the panel. The URL
+/// comes from the panel (a monitored project's `web_url`).
+#[tauri::command]
+pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), CommandError> {
+    open_external_url(&app, &url)?;
     crate::panel::hide(&app);
     Ok(())
 }

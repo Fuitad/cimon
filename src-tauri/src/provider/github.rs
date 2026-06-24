@@ -129,6 +129,7 @@ struct GhJob {
     name: String,
     status: String,
     conclusion: Option<String>,
+    html_url: String,
 }
 
 impl Provider for GithubProvider {
@@ -237,6 +238,7 @@ impl Provider for GithubProvider {
                 status: PipelineStatus::from_github(&j.status, j.conclusion.as_deref()),
                 // GitHub Actions has no "stage" concept (steps live inside jobs).
                 stage: String::new(),
+                web_url: j.html_url,
             })
             .collect())
     }
@@ -396,8 +398,10 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "total_count": 2,
                 "jobs": [
-                    {"id": 100, "name": "build", "status": "completed", "conclusion": "success"},
-                    {"id": 101, "name": "test", "status": "in_progress", "conclusion": null}
+                    {"id": 100, "name": "build", "status": "completed", "conclusion": "success",
+                     "html_url": "https://github.com/acme/web-app/actions/runs/55/job/100"},
+                    {"id": 101, "name": "test", "status": "in_progress", "conclusion": null,
+                     "html_url": "https://github.com/acme/web-app/actions/runs/55/job/101"}
                 ]
             })))
             .mount(&server)
@@ -412,6 +416,10 @@ mod tests {
         assert_eq!(jobs[0].status, PipelineStatus::Success);
         // GitHub has no stage concept.
         assert_eq!(jobs[0].stage, "");
+        assert_eq!(
+            jobs[0].web_url,
+            "https://github.com/acme/web-app/actions/runs/55/job/100"
+        );
         assert_eq!(jobs[1].name, "test");
         assert_eq!(jobs[1].status, PipelineStatus::Running);
     }

@@ -38,6 +38,10 @@ pub fn run() {
                 .expect("failed to resolve app config dir");
             app.manage(commands::AppState::bootstrap(config_dir));
 
+            // Pin native notifications to CIMon's identity before the first one can fire (the
+            // menu-bar notice below, or a poller transition). Required on macOS, no-op elsewhere.
+            notify::init(app.handle());
+
             // Reconcile OS autostart with the persisted preference.
             {
                 let want = app

@@ -25,6 +25,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+# Native notification backend driven directly (not through tauri-plugin-notification) so a clicked
+# transition notification can open the matching CI page. The plugin's click/action events are
+# mobile-only and dropped on desktop; notify-rust reports a click as `NotificationResponse::Default`
+# on macOS, Windows, and Linux/XDG. Already in the tree transitively via the notification plugin.
+notify-rust = "4"
 tauri-plugin-autostart = "2"
 # Tray-relative window positioning for the click-to-open popover panel. The `tray-icon` feature
 # caches the tray icon rect from `on_tray_event` so `move_window(Position::TrayCenter)` anchors the

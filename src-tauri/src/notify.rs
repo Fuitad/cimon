@@ -85,9 +85,36 @@ pub fn notify_running_in_menu_bar(app: &tauri::AppHandle, locale: &str) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
-/// Fire a native notification for a transition if the rules allow it. No-op otherwise.
-/// The guaranteed click-to-open path is the tray project menu item (Task 8); notification
-/// click-to-open is best-effort and intentionally not wired here.
+/// Bind native notifications to CIMon's identity. On macOS the legacy notification center
+/// attributes notifications to the first bundle id set in the process (defaulting to Finder if
+/// none is set), and that setting is process-global and write-once, so it is pinned here at
+/// startup before any notification fires. Mirrors the dev/prod split the notification plugin uses
+/// (dev runs unbundled, so it borrows Terminal's identity). A no-op on other platforms, where the
+/// app identity is set per-notification (Windows) or not required (Linux/XDG).
+pub fn init(_app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let id = if tauri::is_dev() {
+            "com.apple.Terminal".to_string()
+        } else {
+            _app.config().identifier.clone()
+        };
+        let _ = notify_rust::set_application(&id);
+    }
+}
+
+/// The page a clicked transition notification should open: the job's own page for a job-level
+/// transition, falling back to the pipeline page when the provider returned no job URL; the
+/// pipeline page for a pipeline-level transition.
+fn click_url(transition: &Transition) -> &str {
+    match &transition.job {
+        Some(job) if !job.web_url.is_empty() => &job.web_url,
+        _ => &transition.pipeline.web_url,
+    }
+}
+
+/// Fire a native notification for a transition if the rules allow it. No-op otherwise. Clicking
+/// the notification opens the relevant CI page (see [`click_url`]).
 pub fn notify_transition(
     app: &tauri::AppHandle,
     transition: &Transition,
@@ -95,12 +122,59 @@ pub fn notify_transition(
     rules: &NotificationRules,
     locale: &str,
 ) {
-    use tauri_plugin_notification::NotificationExt;
     if !should_notify(rules, transition.kind, transition.job.is_some()) {
         return;
     }
     let (title, body) = format_message(transition, project_name, locale);
-    let _ = app.notification().builder().title(title).body(body).show();
+    let url = click_url(transition).to_string();
+    let action_label = rust_i18n::t!("notify.open_action", locale = locale).to_string();
+    show_clickable(app, title, body, url, action_label);
+}
+
+/// Show a native notification that opens `url` when the user clicks it.
+///
+/// The Tauri notification plugin drops desktop click events (its action events are mobile-only),
+/// so this drives `notify-rust` directly. Registering a `"default"` action is what makes a body
+/// click observable: on Linux/XDG it is delivered as the `default` action, on macOS it promotes
+/// the notification to the synchronous path so a content click is reported, and on Windows it is
+/// the toast's activation. The platforms that render notification buttons (macOS alert style,
+/// Windows) also show it labelled with `action_label`; clicking the body opens the same page.
+///
+/// `wait_for_response` blocks until the user interacts (or the notification closes/expires), so it
+/// runs on a dedicated thread. The Tauri event loop on the main thread keeps the native run loop
+/// pumping, which is what lets the blocking wait deliver the click from this background thread.
+fn show_clickable(
+    app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    url: String,
+    action_label: String,
+) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut builder = notify_rust::Notification::new();
+        builder
+            .summary(&title)
+            .body(&body)
+            .action("default", &action_label);
+        // Toasts require an AppUserModelID matching an installed shortcut; use the bundle id for
+        // the installed app and let notify-rust's default stand in for the unbundled dev binary.
+        #[cfg(target_os = "windows")]
+        if !tauri::is_dev() {
+            builder.app_id(&app.config().identifier);
+        }
+        let handle = match builder.show() {
+            Ok(handle) => handle,
+            Err(_) => return,
+        };
+        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            use notify_rust::NotificationResponse as Response;
+            // A body click (`Default`) or the "Open" action button both mean "take me there".
+            if matches!(response, Response::Default | Response::Action(_)) {
+                let _ = crate::commands::open_external_url(&app, &url);
+            }
+        });
+    });
 }
 
 #[cfg(test)]
@@ -155,6 +229,7 @@ mod tests {
                 name: name.into(),
                 status,
                 stage: "s".into(),
+                web_url: "http://x/1/jobs/1".into(),
             }),
             account_id: String::new(),
             project_name: String::new(),
@@ -218,6 +293,22 @@ mod tests {
         // French: "tâche" is feminine, so the past participle agrees ("échouée", not "échoué").
         let (title_fr, _) = format_message(&tr, "web", "fr");
         assert_eq!(title_fr, "web : tâche build échouée");
+    }
+
+    #[test]
+    fn click_url_prefers_job_then_pipeline() {
+        // A job-level transition opens the job's own page.
+        let job = job_tr(TransitionKind::Failed, "build", PipelineStatus::Failed);
+        assert_eq!(click_url(&job), "http://x/1/jobs/1");
+
+        // A pipeline-level transition opens the pipeline page.
+        let pipe = pipeline_tr(TransitionKind::Failed, PipelineStatus::Failed);
+        assert_eq!(click_url(&pipe), "http://x/1");
+
+        // A job-level transition with no job URL falls back to the pipeline page.
+        let mut job_no_url = job_tr(TransitionKind::Failed, "build", PipelineStatus::Failed);
+        job_no_url.job.as_mut().unwrap().web_url = String::new();
+        assert_eq!(click_url(&job_no_url), "http://x/1");
     }
 
     #[test]
