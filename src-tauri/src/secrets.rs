@@ -6,6 +6,8 @@
 //! line or error surface.
 
 use std::collections::HashMap;
+#[cfg(any(debug_assertions, feature = "dev-tokens"))]
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use zeroize::{Zeroize, Zeroizing};
@@ -105,6 +107,64 @@ impl TokenStore for KeyringStore {
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(TokenStoreError(e.to_string())),
         }
+    }
+}
+
+/// A token store backed by a plaintext JSON file (`{ "<account_id>": "<token>" }`).
+///
+/// It exists only to spare local development the OS keychain's per-build re-authorization prompt:
+/// an unsigned or ad-hoc-signed binary is never in the keychain item's ACL, so macOS re-prompts on
+/// every rebuild and "Always Allow" never sticks. It is activated only when its file is present
+/// (see `AppState::bootstrap`); real builds have no such file and use the keychain. Tokens are held
+/// in the clear on disk, so this is a deliberate dev-only convenience, never a production path. The
+/// file is written `0600` on Unix.
+#[cfg(any(debug_assertions, feature = "dev-tokens"))]
+pub struct FileTokenStore {
+    path: PathBuf,
+}
+
+#[cfg(any(debug_assertions, feature = "dev-tokens"))]
+impl FileTokenStore {
+    pub fn new(path: PathBuf) -> Self {
+        FileTokenStore { path }
+    }
+
+    /// Read the account-id -> token map; a missing or unparseable file reads as empty.
+    fn read_map(&self) -> HashMap<String, String> {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn write_map(&self, map: &HashMap<String, String>) -> Result<(), TokenStoreError> {
+        let json = serde_json::to_string_pretty(map).map_err(|e| TokenStoreError(e.to_string()))?;
+        std::fs::write(&self.path, &json).map_err(|e| TokenStoreError(e.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "dev-tokens"))]
+impl TokenStore for FileTokenStore {
+    fn store(&self, account_id: &str, token: &str) -> Result<(), TokenStoreError> {
+        let mut map = self.read_map();
+        map.insert(account_id.to_string(), token.to_string());
+        self.write_map(&map)
+    }
+
+    fn get(&self, account_id: &str) -> Result<Option<SecretToken>, TokenStoreError> {
+        Ok(self.read_map().get(account_id).map(SecretToken::new))
+    }
+
+    fn delete(&self, account_id: &str) -> Result<(), TokenStoreError> {
+        let mut map = self.read_map();
+        map.remove(account_id);
+        self.write_map(&map)
     }
 }
 
@@ -244,6 +304,26 @@ mod tests {
         assert!(store.get("acct-1").unwrap().is_none());
         // Deleting an absent entry is success.
         store.delete("acct-1").unwrap();
+    }
+
+    #[cfg(any(debug_assertions, feature = "dev-tokens"))]
+    #[test]
+    fn file_store_persists_to_disk_and_deletes() {
+        let path =
+            std::env::temp_dir().join(format!("cimon-test-tokens-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = FileTokenStore::new(path.clone());
+        assert!(store.get("a").unwrap().is_none());
+        store.store("a", "tok").unwrap();
+        store.store("b", "tok2").unwrap();
+        assert_eq!(store.get("a").unwrap().unwrap().expose(), "tok");
+        // A fresh store over the same file sees the persisted token (it is on disk, not in memory).
+        let reopened = FileTokenStore::new(path.clone());
+        assert_eq!(reopened.get("b").unwrap().unwrap().expose(), "tok2");
+        store.delete("a").unwrap();
+        assert!(store.get("a").unwrap().is_none());
+        assert_eq!(store.get("b").unwrap().unwrap().expose(), "tok2");
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A token store that counts how many times the (slow, prompt-causing) `get` is called.
