@@ -125,6 +125,9 @@ pub struct Job {
     pub name: String,
     pub status: JobStatus,
     pub stage: String,
+    /// The job's own page (GitLab job `web_url`, GitHub Actions job `html_url`). A clicked
+    /// job-level notification opens this; pipeline-level notifications open the pipeline's URL.
+    pub web_url: String,
 }
 
 /// Which CI provider an account talks to.

@@ -18,7 +18,7 @@ CIMon is fully standalone. It runs entirely on your machine and talks directly t
 
 * Configure one or more GitLab accounts (gitlab.com or a self-hosted instance) with a scoped access token.
 * Auto-discover the projects your token can access and pick which ones to monitor.
-* Background polling with native notifications when a monitored pipeline, or an individual job within it, starts, succeeds, or fails. Pipeline-level and job-level notifications are independent toggles.
+* Background polling with native notifications when a monitored pipeline, or an individual job within it, starts, succeeds, or fails. Pipeline-level and job-level notifications are independent toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
 * Tray / menu bar icon showing the aggregate status, with quick links to open a pipeline in your browser.
 * Launch at login.
 

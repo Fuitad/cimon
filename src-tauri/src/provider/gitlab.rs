@@ -92,6 +92,7 @@ struct GlJob {
     name: String,
     status: String,
     stage: String,
+    web_url: String,
 }
 
 #[derive(Deserialize)]
@@ -230,6 +231,7 @@ impl Provider for GitlabProvider {
                 name: j.name,
                 status: PipelineStatus::from_gitlab(&j.status),
                 stage: j.stage,
+                web_url: j.web_url,
             })
             .collect())
     }
@@ -339,13 +341,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_jobs_maps_status_name_and_stage() {
+    async fn list_jobs_maps_status_name_stage_and_url() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/7/pipelines/42/jobs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                {"id": 100, "name": "build", "status": "success", "stage": "build"},
-                {"id": 101, "name": "test", "status": "running", "stage": "test"}
+                {"id": 100, "name": "build", "status": "success", "stage": "build",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/100"},
+                {"id": 101, "name": "test", "status": "running", "stage": "test",
+                 "web_url": "https://gitlab.com/acme/app/-/jobs/101"}
             ])))
             .mount(&server)
             .await;
@@ -355,6 +359,7 @@ mod tests {
         assert_eq!(jobs[0].name, "build");
         assert_eq!(jobs[0].status, PipelineStatus::Success);
         assert_eq!(jobs[0].stage, "build");
+        assert_eq!(jobs[0].web_url, "https://gitlab.com/acme/app/-/jobs/100");
         assert_eq!(jobs[1].name, "test");
         assert_eq!(jobs[1].status, PipelineStatus::Running);
     }

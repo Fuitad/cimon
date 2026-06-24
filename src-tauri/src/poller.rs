@@ -434,6 +434,7 @@ mod tests {
             name: format!("job{id}"),
             status,
             stage: "test".into(),
+            web_url: format!("http://x/job/{id}"),
         }
     }
 
@@ -602,7 +603,8 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/1/pipelines/10/jobs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                {"id": 100, "name": "build", "status": "running", "stage": "build"}
+                {"id": 100, "name": "build", "status": "running", "stage": "build",
+                 "web_url": "http://x/p/10/jobs/100"}
             ])))
             .expect(1)
             .mount(&server)

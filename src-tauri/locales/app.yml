@@ -27,6 +27,11 @@ _version: 2
 "notify.body":
   en: "%{branch} (%{status})"
   fr: "%{branch} (%{status})"
+# Label for the click action on a transition notification (the platforms that render notification
+# buttons show it; clicking the notification body opens the same page). Keep it short.
+"notify.open_action":
+  en: "Open"
+  fr: "Ouvrir"
 
 "tray.open_settings":
   en: "Open Settings"
