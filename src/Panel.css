@@ -318,7 +318,7 @@ body {
 }
 
 /* Build indicator centered between Settings and Quit; flex:1 fills the gap so the buttons stay at
-   the edges. Muted (>=4.5:1) and ellipsized so a long build stamp never widens the footer. */
+   the edges. Muted (>=4.5:1) and ellipsized so the version plus commit SHA never widens the footer. */
 .panel__version {
   flex: 1;
   min-width: 0;

@@ -334,7 +334,7 @@ export const openProjectUrl = (url: string): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("open_project_url", { url });
 
 export const appInfo = (): Promise<AppInfo> =>
-  PREVIEW ? Promise.resolve({ version: "dev", built_at_ms: Date.now() }) : invoke("app_info");
+  PREVIEW ? Promise.resolve({ version: "dev", commit: "abcdef1" }) : invoke("app_info");
 
 export const showSettingsWindow = (): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("show_settings_window");
