@@ -98,6 +98,30 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
     }
 }
 
+/// Build the representative pipeline whose status the project's aggregate reflects. A single push
+/// fans out into multiple workflow runs sharing one `head_sha` (GitHub runs every matching
+/// workflow); `list_pipelines` returns them newest-first, so `latest[0]` names the newest commit.
+/// The project's status is the WORST (highest [`severity`](PipelineStatus::severity)) across every
+/// run of that commit, so a finished run never masks a sibling still in progress (a passed CI run
+/// while a Security-audit run for the same commit is still running keeps the project Running).
+///
+/// The newest run supplies the branch / url / timestamp; only its status is replaced by the
+/// aggregate. GitLab returns one pipeline per commit, so the group is a single run and this
+/// collapses to "the newest pipeline" (a no-op there). Returns `None` for an empty list.
+fn aggregate_current(latest: &[Pipeline]) -> Option<Pipeline> {
+    let newest = latest.first()?;
+    let status = latest
+        .iter()
+        .filter(|p| p.sha == newest.sha)
+        .map(|p| p.status)
+        .max_by_key(|s| s.severity())
+        .unwrap_or(newest.status);
+    Some(Pipeline {
+        status,
+        ..newest.clone()
+    })
+}
+
 /// Last-seen pipeline state, used to detect transitions across polls.
 #[derive(Default)]
 pub struct PollState {
@@ -138,14 +162,16 @@ impl PollState {
     /// while the poller is already running) seeds state and returns nothing, so pipelines that
     /// predate monitoring never produce notifications.
     ///
-    /// `latest` is expected newest-first (the GitLab list is ordered by `updated_at` desc), so
-    /// `latest[0]` drives the project's current aggregate status.
+    /// `latest` is expected newest-first (GitLab orders by `updated_at` desc, GitHub by
+    /// `created_at` desc), so `latest[0]` names the newest commit. The project's aggregate status
+    /// spans ALL of that commit's runs (see [`aggregate_current`]), not just the first one, so a
+    /// GitHub push that fans into several workflow runs stays Running until every run settles.
     pub fn detect(&mut self, key: &ProjectKey, latest: &[Pipeline]) -> Vec<Transition> {
-        // The newest pipeline (list is sorted desc) drives this project's aggregate status;
-        // an empty list means the project has no current pipeline, so drop any stale entry.
-        match latest.first() {
-            Some(newest) => {
-                self.current.insert(key.clone(), newest.clone());
+        // Drive this project's aggregate status from every run of the newest commit, not just the
+        // single newest run; an empty list means no current pipeline, so drop any stale entry.
+        match aggregate_current(latest) {
+            Some(rep) => {
+                self.current.insert(key.clone(), rep);
             }
             None => {
                 self.current.remove(key);
@@ -712,6 +738,28 @@ mod tests {
         s.detect(&("a".into(), 1), &[pipeline(1, PipelineStatus::Running)]);
         s.detect(&("b".into(), 2), &[pipeline(2, PipelineStatus::Failed)]);
         assert_eq!(s.aggregate_status(), Some(PipelineStatus::Failed));
+    }
+
+    #[test]
+    fn aggregate_status_spans_newest_commits_runs_only() {
+        // A GitHub push fans out into several workflow runs sharing one head_sha; the project's
+        // status is the WORST across THAT commit's runs. A finished CI run (Success) must not mask
+        // a still-running run (Running) for the same commit, and an OLDER commit's failed run, now
+        // superseded, must not keep the project red either.
+        let mut s = PollState::default();
+        let mut ci = pipeline(3, PipelineStatus::Success);
+        ci.sha = "newsha".into();
+        let mut audit = pipeline(2, PipelineStatus::Running);
+        audit.sha = "newsha".into();
+        let mut older = pipeline(1, PipelineStatus::Failed);
+        older.sha = "oldsha".into();
+        // Newest-first: both runs of the new commit lead; the superseded old failure trails.
+        s.detect(&key(), &[ci, audit, older]);
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "the newest commit's still-running run wins; the older commit's failure is ignored"
+        );
     }
 
     #[test]
