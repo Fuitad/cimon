@@ -101,20 +101,29 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
 /// Build the representative pipeline whose status the project's aggregate reflects. A single push
 /// fans out into multiple workflow runs sharing one `head_sha` (GitHub runs every matching
 /// workflow); `list_pipelines` returns them newest-first, so `latest[0]` names the newest commit.
-/// The project's status is the WORST (highest [`severity`](PipelineStatus::severity)) across every
-/// run of that commit, so a finished run never masks a sibling still in progress (a passed CI run
-/// while a Security-audit run for the same commit is still running keeps the project Running).
+///
+/// While ANY run of that commit is still in flight ([`is_in_flight`](PipelineStatus::is_in_flight),
+/// i.e. running or queued) the commit as a whole is in flight: the worst in-flight status wins
+/// (Running over Pending), so a sibling that has already failed never pre-empts a run that is still
+/// going. Only once every run has settled does the worst terminal status win (Failed over a passed
+/// or skipped run). This keeps the project "in progress" until all of that commit's runs settle,
+/// then reflects the commit's true outcome.
 ///
 /// The newest run supplies the branch / url / timestamp; only its status is replaced by the
 /// aggregate. GitLab returns one pipeline per commit, so the group is a single run and this
 /// collapses to "the newest pipeline" (a no-op there). Returns `None` for an empty list.
 fn aggregate_current(latest: &[Pipeline]) -> Option<Pipeline> {
     let newest = latest.first()?;
-    let status = latest
-        .iter()
-        .filter(|p| p.sha == newest.sha)
-        .map(|p| p.status)
+    let runs = || {
+        latest
+            .iter()
+            .filter(|p| p.sha == newest.sha)
+            .map(|p| p.status)
+    };
+    let status = runs()
+        .filter(PipelineStatus::is_in_flight)
         .max_by_key(|s| s.severity())
+        .or_else(|| runs().max_by_key(|s| s.severity()))
         .unwrap_or(newest.status);
     Some(Pipeline {
         status,
@@ -600,6 +609,16 @@ mod tests {
     #[tokio::test]
     async fn poll_once_dispatches_to_github_provider() {
         let server = MockServer::start().await;
+        // Repo metadata fetch: list_pipelines reads the default branch here, then scopes the runs
+        // query to it.
+        Mock::given(method("GET"))
+            .and(path("/api/v3/repos/acme/web-app"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "name": "web-app", "full_name": "acme/web-app",
+                "html_url": "http://x/repo", "owner": {"login": "acme"}, "default_branch": "main"
+            })))
+            .mount(&server)
+            .await;
         // GitHub Actions runs endpoint (GHE path, since server.uri() is an IP host). A GitLab
         // provider would request `/api/v4/...` instead, so reaching this path AND parsing the
         // run proves the dispatch routed to GithubProvider.
@@ -671,6 +690,18 @@ mod tests {
 
     fn key() -> ProjectKey {
         ("acct".into(), 1)
+    }
+
+    /// Mount the GitLab single-project metadata endpoint so `list_pipelines` can read the default
+    /// branch before fetching pipelines. Without it the project fetch 404s and the poll fails.
+    async fn mount_gl_project(server: &MockServer, id: u64, default_branch: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/projects/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": id, "name": "p", "web_url": "u", "default_branch": default_branch
+            })))
+            .mount(server)
+            .await;
     }
 
     #[test]
@@ -763,6 +794,41 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_keeps_commit_in_flight_until_every_run_settles() {
+        // Within one commit's runs, an in-flight run (Running/Pending) outranks a settled failure:
+        // a CI run that has already failed must NOT flip the project to Failed while a sibling run
+        // (e.g. Security audit) is still running. Only once all runs settle does the worst terminal
+        // status win. pipeline() gives every run the same sha, so these are one commit's runs.
+        let mut s = PollState::default();
+        s.detect(
+            &key(),
+            &[
+                pipeline(3, PipelineStatus::Running),
+                pipeline(2, PipelineStatus::Failed),
+            ],
+        );
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "a still-running sibling keeps the commit Running despite a failed run"
+        );
+
+        // All runs now settled: the worst terminal status (Failed) wins.
+        s.detect(
+            &key(),
+            &[
+                pipeline(3, PipelineStatus::Success),
+                pipeline(2, PipelineStatus::Failed),
+            ],
+        );
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Failed),
+            "once every run settles, the worst terminal status wins"
+        );
+    }
+
+    #[test]
     fn empty_pipeline_list_clears_current_status() {
         let mut s = PollState::default();
         s.detect(&key(), &[pipeline(1, PipelineStatus::Failed)]);
@@ -844,6 +910,7 @@ mod tests {
     #[tokio::test]
     async fn poll_once_fetches_jobs_when_job_level_on() {
         let server = MockServer::start().await;
+        mount_gl_project(&server, 1, "main").await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/1/pipelines"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -874,6 +941,7 @@ mod tests {
     #[tokio::test]
     async fn poll_once_skips_jobs_when_job_level_off() {
         let server = MockServer::start().await;
+        mount_gl_project(&server, 1, "main").await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/1/pipelines"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -931,7 +999,8 @@ mod tests {
     #[tokio::test]
     async fn poll_once_isolates_one_failing_project() {
         let server = MockServer::start().await;
-        // Project 1 healthy; project 2 returns 500.
+        // Project 1 healthy; project 2 returns 500 (here, on its metadata fetch).
+        mount_gl_project(&server, 1, "main").await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/1/pipelines"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -940,7 +1009,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/api/v4/projects/2/pipelines"))
+            .and(path("/api/v4/projects/2"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
@@ -1096,6 +1165,7 @@ mod tests {
     #[tokio::test]
     async fn poll_failure_marks_project_stale_keeping_last_known() {
         let server = MockServer::start().await;
+        mount_gl_project(&server, 1, "main").await;
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/1/pipelines"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
@@ -1243,6 +1313,7 @@ mod tests {
         // token_health must NOT fire an HTTP request every tick. Two ticks within the throttle
         // window perform the health check (here, the self-introspection request) at most once.
         let server = MockServer::start().await;
+        mount_gl_project(&server, 1, "main").await;
         Mock::given(method("GET"))
             .and(path("/api/v4/user"))
             .respond_with(
@@ -1278,6 +1349,7 @@ mod tests {
     #[tokio::test]
     async fn token_health_recovery_clears_auth_failed() {
         let server = MockServer::start().await;
+        mount_gl_project(&server, 1, "main").await;
         // Liveness passes (/user 200), then expiry is read from the self endpoint.
         Mock::given(method("GET"))
             .and(path("/api/v4/user"))
