@@ -29,6 +29,10 @@ concurrency:
 jobs:
   build:
     name: Build (${{ matrix.platform }} ${{ matrix.target || 'x64' }})
+    # Cap the job so an intermittent Apple notary-service hang (notarytool --wait can stall for
+    # hours) fails this leg in under an hour instead of burning the 6-hour runner limit. The fast
+    # Windows/Linux legs finish well under this, so the cap only ever bites a stuck macOS notarize.
+    timeout-minutes: 50
     permissions:
       contents: write
     strategy:
