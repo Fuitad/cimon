@@ -18,9 +18,9 @@ const TRAY_ID: &str = "cimon-tray";
 
 /// Shared RGBA status palette: vibrant, high-chroma colors (OKLCH-derived) chosen so the aggregate
 /// menu-bar icon stays legible on any background, including a translucent colored menu bar where
-/// muted tones would fade out. The aggregate tray icon ([`status_color`]) frames them with a dark
-/// keyline; the per-project status colors used by the popover panel live in the frontend tokens
-/// (`src/tokens.css`), tuned for window-surface contrast rather than menu-bar legibility.
+/// muted tones would fade out. The aggregate tray icon ([`status_color`]) frames them with a thin
+/// dark keyline; the per-project status colors used by the popover panel live in the frontend
+/// tokens (`src/tokens.css`), tuned for window-surface contrast rather than menu-bar legibility.
 const COLOR_RED: [u8; 4] = [0xFA, 0x2C, 0x2E, 0xFF]; // failed   (oklch 0.635 0.237 27)
 const COLOR_BLUE: [u8; 4] = [0x00, 0x95, 0xFF, 0xFF]; // running  (oklch 0.66 0.19 250)
 const COLOR_AMBER: [u8; 4] = [0xFA, 0xAD, 0x00, 0xFF]; // pending  (oklch 0.80 0.175 78)
@@ -29,8 +29,8 @@ const COLOR_WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF]; // idle (drawn as a macOS
 
 /// RGBA color for the aggregate tray icon. `None` = idle (nothing tracked); idle is white and
 /// drawn as a macOS template (see `set_status`) so the menu bar keeps it visible on any
-/// background. Active states are the vibrant shared palette that [`logo_icon`] frames with a dark
-/// keyline so the glyph reads on a dark, light, or translucent colored menu bar.
+/// background. Active states are the vibrant shared palette that [`logo_icon`] frames with a thin
+/// dark keyline so the glyph reads on a dark, light, or translucent colored menu bar.
 pub fn status_color(status: Option<PipelineStatus>) -> [u8; 4] {
     match status {
         Some(PipelineStatus::Failed) => COLOR_RED,
@@ -45,12 +45,16 @@ pub fn status_color(status: Option<PipelineStatus>) -> [u8; 4] {
 /// chosen for crisp downscaling on Retina/2-3x displays.
 const ICON_N: u32 = 64;
 
-/// Dark keyline drawn around the colored aggregate glyph so its silhouette stays legible on any
-/// menu-bar background. `OUTLINE_STROKE` is the rim width in the 256-unit design space; the color
-/// is a near-black graphite that blends into a dark bar yet separates the glyph on a light or
-/// translucent colored one. Idle renders without it: it is a template image macOS recolors for
-/// contrast instead.
-const OUTLINE_STROKE: f64 = 15.0;
+/// Thin dark keyline drawn around the colored aggregate glyph so its silhouette stays legible on
+/// any menu-bar background. `OUTLINE_STROKE` is the rim width in the 256-unit design space, kept
+/// deliberately thin: a thick rim reads as a heavy black border that, by also growing the glyph's
+/// footprint toward full-bleed, made the icon clash with the thin monochrome template glyphs of
+/// neighboring menu-bar apps. At this width the glyph keeps the intrinsic margin of its geometry
+/// (the ring's outer radius is 108 of the 128 half-box), so it sits at a neighbor-matching size.
+/// The color is a near-black graphite that all but disappears into a dark bar yet still separates
+/// the glyph on a light or translucent colored one (where a same-hue rim could not). Idle renders
+/// without it: it is a template image macOS recolors for contrast instead.
+const OUTLINE_STROKE: f64 = 5.0;
 const OUTLINE_COLOR: [u8; 3] = [0x12, 0x16, 0x18];
 
 /// Anti-aliased coverage (0.0..=1.0) of a filled disc at point `p`, centered at `c` with radius
@@ -64,7 +68,7 @@ fn disc_coverage(p: (f64, f64), c: (f64, f64), r: f64, aa: f64) -> f64 {
 /// `color`, anti-aliased on a transparent background. Geometry mirrors the app icon
 /// (`icons/*.png`) in its 256-unit design space, with a touch more mass than the icon's hairlines
 /// so the ring and dots survive the menu bar's ~18pt downscale. When `outlined`, the glyph is
-/// framed with a dark keyline ([`OUTLINE_COLOR`]) so its silhouette and the vibrant fill stay
+/// framed with a thin dark keyline ([`OUTLINE_COLOR`]) so its silhouette and the vibrant fill stay
 /// legible on a dark, light, or translucent colored menu bar; this is the internal contrast the
 /// flat app icon gets from its dark ring around the bright orb. Active (colored) states pass
 /// `outlined = true`; the idle state is white, drawn without the keyline, and flagged as a macOS
@@ -253,29 +257,39 @@ mod tests {
             c[3] > 200,
             "glyph center should be (near) opaque, got {c:?}"
         );
-        // Just past the ring's outer edge sits the keyline band: opaque and dark. This internal
-        // contrast is what keeps the glyph legible on a colored menu bar.
-        let rim = px(ICON_N / 2, 3);
-        assert!(rim[3] > 200, "keyline band should be opaque, got {rim:?}");
+        // Scanning down the center column, the outermost opaque pixel is the keyline band: opaque
+        // and dark. This internal contrast is what keeps the glyph legible on a colored menu bar.
+        // (Scanning by coverage keeps the test valid if the glyph geometry is retuned.)
+        let rim = (0..ICON_N)
+            .map(|y| px(ICON_N / 2, y))
+            .find(|p| p[3] > 200)
+            .expect("center column should cross the glyph");
         assert!(
             rim[0] < 70 && rim[1] < 70 && rim[2] < 70,
-            "keyline band should be the dark rim color, got {rim:?}"
+            "outermost glyph band should be the dark keyline color, got {rim:?}"
         );
-        // A corner is outside the glyph: fully transparent.
+        // A corner is outside the glyph (in the design's intrinsic margin): fully transparent.
         assert_eq!(px(0, 0)[3], 0, "corner should be transparent");
     }
 
     #[test]
     fn idle_glyph_renders_without_a_keyline() {
-        // Idle is drawn flat (no keyline) and recolored by macOS as a template image, so the band
-        // that an outlined glyph fills with the dark rim must be transparent here.
+        // Idle is drawn flat (no keyline) and recolored by macOS as a template image. Scanning
+        // down the center column, the outermost opaque pixel must be the white fill, never a dark
+        // keyline band, so macOS's template recoloring has a clean silhouette to invert.
         let img = logo_icon(status_color(None), false);
         let rgba = img.rgba();
-        let alpha = |x: u32, y: u32| rgba[((y * ICON_N + x) * 4 + 3) as usize];
-        assert_eq!(
-            alpha(ICON_N / 2, 3),
-            0,
-            "idle glyph must have no keyline band"
+        let px = |x: u32, y: u32| {
+            let i = ((y * ICON_N + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+        let edge = (0..ICON_N)
+            .map(|y| px(ICON_N / 2, y))
+            .find(|p| p[3] > 200)
+            .expect("center column should cross the idle glyph");
+        assert!(
+            edge[0] > 200 && edge[1] > 200 && edge[2] > 200,
+            "idle glyph edge must be the white fill, not a dark keyline, got {edge:?}"
         );
     }
 
