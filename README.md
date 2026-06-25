@@ -77,6 +77,13 @@ Build a release bundle:
 npm run tauri build
 ```
 
+Run the frontend tests (Vitest):
+
+```sh
+npm test          # watch mode
+npm run test:run  # one-shot, the way CI runs them
+```
+
 Run the Rust unit tests:
 
 ```sh

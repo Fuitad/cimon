@@ -36,6 +36,9 @@ npm run --silent typecheck || record "tsc --noEmit"
 section "knip (dead code / unused exports & deps)"
 npm run --silent knip || record "knip"
 
+section "Vitest"
+npm run --silent test:run || record "vitest"
+
 # ---------- Rust (src-tauri) ----------
 section "rustfmt"
 ( cd src-tauri && cargo fmt --check ) || record "cargo fmt --check"
