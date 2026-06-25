@@ -45,6 +45,7 @@ docs/prd
 # Node / Tauri build
 node_modules/
 dist/
+coverage/
 DESIGN.md
 PRODUCT.md
 

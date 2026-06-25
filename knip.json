@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreExportsUsedInFile": true,
-  "entry": ["src/panel-main.tsx"],
+  "entry": ["src/panel-main.tsx", "src/**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}"],
   "project": ["src/**/*.{ts,tsx}"]
 }

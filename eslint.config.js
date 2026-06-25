@@ -8,7 +8,7 @@ import prettier from "eslint-config-prettier";
 // Flat config. App code (src/) runs in the browser/webview; the root build configs run in Node.
 // `eslint-config-prettier` is last so it disables stylistic rules that Prettier owns.
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri/**"] },
+  { ignores: ["dist", "coverage", "node_modules", "src-tauri/**"] },
   {
     files: ["src/**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],

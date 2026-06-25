@@ -1,13 +1,13 @@
 import { fileURLToPath } from "node:url";
 
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(() => ({
   plugins: [react()],
 
   // Two HTML entry points: the settings window (index.html) and the tray popover panel
@@ -40,6 +40,23 @@ export default defineConfig(async () => ({
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+    },
+  },
+
+  // Vitest. jsdom for the React component tests; `globals` so test files use describe/it/expect
+  // without importing them. Do NOT set `mode: "production"` here: api.ts's dev PREVIEW branches
+  // depend on `import.meta.env.DEV` being true (Vitest's default), and a production mode would make
+  // every preview fixture path unreachable.
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./vitest.setup.ts"],
+    css: false,
+    include: ["src/**/*.test.{ts,tsx}"],
+    coverage: {
+      provider: "v8" as const,
+      reporter: ["text", "html"],
+      include: ["src/**/*.{ts,tsx}"],
     },
   },
 }));

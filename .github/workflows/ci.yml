@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend (eslint, prettier, tsc, knip)
+    name: Frontend (eslint, prettier, tsc, knip, vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -29,6 +29,8 @@ jobs:
         run: npm run typecheck
       - name: knip (dead code / unused exports & deps)
         run: npm run knip
+      - name: Tests (vitest)
+        run: npm run test:run
 
   rust:
     name: Rust (rustfmt, clippy, cargo-machete, tests)
