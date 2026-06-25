@@ -77,6 +77,16 @@ impl KeyringStore {
     fn entry(account_id: &str) -> Result<keyring::Entry, TokenStoreError> {
         keyring::Entry::new(SERVICE, account_id).map_err(|e| TokenStoreError(e.to_string()))
     }
+
+    /// Probe whether the OS credential service is reachable, without storing anything.
+    ///
+    /// Reads a sentinel entry that is never written: a reachable service answers `NoEntry`
+    /// (mapped to `Ok(None)` by [`get`](TokenStore::get)), so `Ok(())` means reachable. An
+    /// unreachable backend (e.g. no Secret Service on Linux) fails the read and returns `Err`.
+    /// Reading a NON-existent item needs no unlock, so this does not trip a locked-keyring prompt.
+    pub fn probe(&self) -> Result<(), TokenStoreError> {
+        self.get("__cimon_probe__").map(|_| ())
+    }
 }
 
 impl Default for KeyringStore {

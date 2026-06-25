@@ -129,6 +129,8 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
         return t("accounts.error.invalid_base_url");
       case "network":
         return t("accounts.error.network");
+      case "storage":
+        return t("accounts.error.storage");
       default:
         return t("accounts.error.generic", { message: err.message });
     }

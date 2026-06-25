@@ -58,6 +58,8 @@ chmod +x CIMon_*.AppImage
 ./CIMon_*.AppImage
 ```
 
+CIMon stores your access tokens through the Secret Service API, so a provider such as GNOME Keyring or KWallet must be installed and running. Most desktop environments (GNOME, KDE) include one by default. On a minimal or headless setup without one, CIMon warns at startup and cannot save or read tokens until a provider is available.
+
 ## Requirements (development)
 
 * Node.js 20.19 or newer (Vite 7 requires 20.19+, or 22.12+) and npm

@@ -68,6 +68,10 @@ pub enum TokenEventKind {
     AuthFailed,
     /// The token is valid but within a warning bracket; `hours` is the bracket ceiling (72 or 24).
     ExpiringSoon { hours: i64, expires_at: String },
+    /// The OS credential store could not be reached to read a token (e.g. no Secret Service /
+    /// GNOME Keyring / KWallet running on Linux). Distinct from a missing entry: this is the
+    /// store itself being unavailable, which otherwise leaves the poller silently idle.
+    KeychainUnavailable,
 }
 
 /// A token-health event for one account, carried to the notification layer.
@@ -161,6 +165,10 @@ pub struct PollState {
     /// Epoch seconds of the last `token_health` check per account, to throttle it below the poll
     /// cadence (see [`TOKEN_HEALTH_MIN_INTERVAL_SECS`]).
     token_health_checked_at: HashMap<String, i64>,
+    /// Whether the "credential store unavailable" notification has already fired for the current
+    /// outage. The store is process-global (not per-account), so this dedupes to one notification
+    /// per episode; a later successful read clears it so a recurrence re-notifies.
+    keychain_unavailable_notified: bool,
 }
 
 impl PollState {
@@ -421,8 +429,35 @@ pub async fn poll_once(
             continue;
         }
         let token = match tokens.get(&acct.id) {
-            Ok(Some(t)) => t,
-            _ => continue, // no/unreadable token: skip this account this tick
+            Ok(Some(t)) => {
+                // A successful read clears any prior credential-store outage so a recurrence
+                // notifies again.
+                state.keychain_unavailable_notified = false;
+                t
+            }
+            // No token stored for this account is not a store failure: skip quietly.
+            Ok(None) => {
+                state.keychain_unavailable_notified = false;
+                continue;
+            }
+            // The credential store itself is unreachable (e.g. no Secret Service on Linux). Without
+            // a signal the poller would idle forever; emit one notification per outage, then skip.
+            Err(_) => {
+                if !state.keychain_unavailable_notified {
+                    state.keychain_unavailable_notified = true;
+                    let label = if acct.label.is_empty() {
+                        acct.identity.username.clone()
+                    } else {
+                        acct.label.clone()
+                    };
+                    token_events.push(TokenEvent {
+                        account_id: acct.id.clone(),
+                        account_label: label,
+                        kind: TokenEventKind::KeychainUnavailable,
+                    });
+                }
+                continue;
+            }
         };
         let provider = build_provider(
             acct.provider,
@@ -1306,6 +1341,55 @@ mod tests {
         let (_t2, events2) =
             poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_400).await;
         assert!(events2.is_empty(), "auth-failure notifies once per episode");
+    }
+
+    /// A token store whose reads always fail, simulating an unavailable OS credential service
+    /// (e.g. no Secret Service / GNOME Keyring / KWallet running on Linux).
+    struct FailingTokenStore;
+    impl TokenStore for FailingTokenStore {
+        fn store(&self, _: &str, _: &str) -> Result<(), crate::secrets::TokenStoreError> {
+            Ok(())
+        }
+        fn get(
+            &self,
+            _: &str,
+        ) -> Result<Option<crate::secrets::SecretToken>, crate::secrets::TokenStoreError> {
+            Err(crate::secrets::TokenStoreError(
+                "service unavailable".into(),
+            ))
+        }
+        fn delete(&self, _: &str) -> Result<(), crate::secrets::TokenStoreError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn keychain_read_failure_emits_unavailable_event_once() {
+        // A read error from the credential store (not a missing entry) must surface a one-time
+        // "keychain unavailable" event instead of silently skipping the account every tick.
+        let server = MockServer::start().await;
+        let cfg = job_level_cfg(&server, false);
+        let tokens = FailingTokenStore;
+        let mut state = PollState::default();
+
+        let (_t, events) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
+        assert_eq!(
+            events.len(),
+            1,
+            "one KeychainUnavailable event on the first failed read"
+        );
+        assert!(matches!(
+            events[0].kind,
+            TokenEventKind::KeychainUnavailable
+        ));
+
+        // Deduped per episode: a second tick with the store still failing does not re-notify.
+        let (_t2, events2) =
+            poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_400).await;
+        assert!(
+            events2.is_empty(),
+            "keychain-unavailable notifies once per episode, not every tick"
+        );
     }
 
     #[tokio::test]

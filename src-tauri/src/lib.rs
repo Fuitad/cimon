@@ -18,6 +18,32 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 // macro. Falls back to English for unknown locales or missing keys.
 rust_i18n::i18n!("locales", fallback = "en");
 
+/// Warn with a native error dialog when the OS credential store is unreachable at startup.
+///
+/// Only meaningful on Linux, where the Secret Service (GNOME Keyring / KWallet) may be absent;
+/// macOS Keychain and Windows Credential Manager are part of the OS. Skipped for dev / `dev-tokens`
+/// builds, which read tokens from a plaintext file rather than the keychain. The gates are runtime
+/// `cfg!` checks (not `#[cfg]`) so the body is typechecked on every platform, while only a Linux
+/// release build actually probes and warns. The probe is a blocking keychain read, so it runs on a
+/// background thread and the dialog is dispatched non-blocking; neither delays startup.
+fn warn_if_credential_store_unavailable(app: &tauri::AppHandle, locale: String) {
+    if !cfg!(target_os = "linux") || cfg!(any(debug_assertions, feature = "dev-tokens")) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if secrets::KeyringStore::new().probe().is_err() {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            let (title, body) = notify::format_keychain_unavailable(&locale);
+            app.dialog()
+                .message(body)
+                .kind(MessageDialogKind::Error)
+                .title(title)
+                .show(|_| {});
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -27,6 +53,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Load config and APPLY the locale (inside bootstrap) BEFORE the tray is built and
             // the poller spawns, so the first notifications and the initial tray menu are
@@ -40,6 +67,17 @@ pub fn run() {
             // Pin native notifications to CIMon's identity before the first one can fire (the
             // menu-bar notice below, or a poller transition). Required on macOS, no-op elsewhere.
             notify::init(app.handle());
+
+            // Warn up front (Linux) if the OS credential store is unreachable, so a missing Secret
+            // Service is loud at launch instead of surfacing only as silently idle monitoring.
+            {
+                let state = app.state::<commands::AppState>();
+                let locale = {
+                    let cfg = state.config.lock().unwrap();
+                    i18n::resolve(&cfg)
+                };
+                warn_if_credential_store_unavailable(app.handle(), locale);
+            }
 
             // Reconcile OS autostart with the persisted preference.
             {

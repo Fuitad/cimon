@@ -65,6 +65,7 @@
       "unauthorized": "Jeton refusé. Vérifiez le jeton et sa portée.",
       "invalid_base_url": "URL d'instance invalide. Elle doit commencer par https.",
       "network": "Impossible de joindre le serveur.",
+      "storage": "Impossible d'accéder au trousseau du système. Sous Linux, assurez-vous qu'un service de secrets (GNOME Keyring ou KWallet) est en cours d'exécution, puis réessayez.",
       "generic": "Une erreur s'est produite : {{message}}"
     }
   },

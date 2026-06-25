@@ -65,6 +65,7 @@
       "unauthorized": "Token rejected. Check the token and its scope.",
       "invalid_base_url": "Invalid instance URL. It must start with https.",
       "network": "Could not reach the server.",
+      "storage": "Could not access the system credential store. On Linux, make sure a secret service (GNOME Keyring or KWallet) is running, then try again.",
       "generic": "Something went wrong: {{message}}"
     }
   },
