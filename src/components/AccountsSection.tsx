@@ -70,26 +70,16 @@ const TOKEN_PLACEHOLDER: Record<ProviderKind, string> = {
   github: "ghp-...",
 };
 
-/** Whole UTC calendar days until `date` (a "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS UTC" provider
- *  string). Negative once past, 0 on the expiry day. Both providers express expiry as a UTC date or
- *  instant, so differencing the UTC day index ("expires on day X") is stable across the viewer's
- *  timezone and never over-reports the way ceil() of a fractional 24h chunk does. Normalizes the
- *  GitHub " UTC"/space form to an ISO string Date can parse. */
-function daysUntil(date: string): number {
-  const exp = Date.parse(date.replace(" UTC", "Z").replace(" ", "T"));
-  const dayMs = 86_400_000;
-  return Math.floor(exp / dayMs) - Math.floor(Date.now() / dayMs);
-}
-
-/** Localized "Expires in N days" / "Expires today" label for a known expiry date. */
-function expiryLabel(date: string, t: TFunction): string {
-  const d = daysUntil(date);
-  return d <= 0 ? t("accounts.expiresToday") : t("accounts.expiresInDays", { count: d });
-}
-
-/** Within the 72h (3-day) warning window. */
-function expiringSoon(date: string): boolean {
-  return daysUntil(date) <= 3;
+/** The expiry line to render for an account, from the backend-computed `expires_in_days` (the Rust
+ *  core is the single source of truth, so the frontend never re-parses the provider date and the
+ *  two cannot drift). `days` is `null` when the backend could not parse the expiry, which surfaces
+ *  an explicit "expiry unknown" rather than a misleading label. `warn` drives the warning style. */
+function expiryView(days: number | null, t: TFunction): { text: string; warn: boolean } {
+  if (days === null) return { text: t("accounts.expiryUnknown"), warn: false };
+  if (days < 0) return { text: t("accounts.expired"), warn: true };
+  if (days === 0) return { text: t("accounts.expiresToday"), warn: true };
+  // Within the 72h (3-day) warning window.
+  return { text: t("accounts.expiresInDays", { count: days }), warn: days <= 3 };
 }
 
 interface AccountsSectionProps {
@@ -191,7 +181,9 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
       await updateAccountToken(id, newToken.trim());
       setEditingId(null);
       setNewToken("");
-      refreshHealth();
+      // No explicit refreshHealth() here: onAccountsChanged() reloads the account list in the
+      // parent, whose new `accounts` reference re-runs the health-refresh effect. Calling both
+      // double-fetched token health on every update.
       onAccountsChanged();
     } catch (err) {
       setUpdateError(asCommandError(err));
@@ -219,6 +211,9 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
           {accounts.map((a) => {
             const h = health[a.id];
             const editing = editingId === a.id;
+            // An expiry line is shown only when the token has an expiry; its content comes from the
+            // backend-computed day count (computed once here, not twice per render).
+            const expiry = h?.expires_at ? expiryView(h.expires_in_days, t) : null;
             return (
               <li className="row" key={a.id}>
                 <span
@@ -234,13 +229,9 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
                   {h?.auth_failed ? (
                     <span className="row__alert">{t("accounts.tokenInvalid")}</span>
                   ) : (
-                    h?.expires_at && (
-                      <span
-                        className={`row__expiry${
-                          expiringSoon(h.expires_at) ? " row__expiry--warn" : ""
-                        }`}
-                      >
-                        {expiryLabel(h.expires_at, t)}
+                    expiry && (
+                      <span className={`row__expiry${expiry.warn ? " row__expiry--warn" : ""}`}>
+                        {expiry.text}
                       </span>
                     )
                   )}

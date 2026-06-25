@@ -59,6 +59,8 @@
     "expiresToday": "Expires today",
     "expiresInDays_one": "Expires in {{count}} day",
     "expiresInDays_other": "Expires in {{count}} days",
+    "expired": "Expired",
+    "expiryUnknown": "Expiry unknown",
     "error": {
       "unauthorized": "Token rejected. Check the token and its scope.",
       "invalid_base_url": "Invalid instance URL. It must start with https.",

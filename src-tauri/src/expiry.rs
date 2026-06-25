@@ -74,6 +74,12 @@ pub fn parse_expiry(s: &str) -> Option<i64> {
         {
             return None;
         }
+        // A leap second (`:60`) is a valid wall-clock value, but the civil-days timeline we map onto
+        // has no slot for it. Clamp it to `:59` of the SAME minute so it never rolls forward into the
+        // next minute (and, at 23:59:60, into the next day).
+        if ss == 60 {
+            ss = 59;
+        }
     }
     Some(days_from_civil(y, mo, d) * 86_400 + hh * 3_600 + mm * 60 + ss)
 }
@@ -89,6 +95,18 @@ pub fn now_unix() -> i64 {
 /// Whole hours from `now_secs` until `expiry_secs` (negative once expired). Truncates toward zero.
 pub fn hours_until(expiry_secs: i64, now_secs: i64) -> i64 {
     (expiry_secs - now_secs) / 3_600
+}
+
+/// Whole UTC calendar days from `now_secs` until the parsed `expires_at` (negative once past, `0`
+/// on the expiry day), or `None` when `expires_at` cannot be parsed. Floors each instant to its UTC
+/// civil day before differencing, so the result is stable across the viewer's timezone and never
+/// over-reports the way ceiling a fractional 24h chunk would. This is the single source of truth for
+/// "days until expiry": the frontend renders this value instead of re-parsing the provider string.
+pub fn days_until(expires_at: &str, now_secs: i64) -> Option<i64> {
+    let exp = parse_expiry(expires_at)?;
+    // `div_euclid` floors toward negative infinity (unlike `/`, which truncates toward zero), so a
+    // pre-epoch or pre-`now` instant lands on the correct earlier civil day.
+    Some(exp.div_euclid(86_400) - now_secs.div_euclid(86_400))
 }
 
 /// Which warning bracket the token is CURRENTLY in, by ascending ceiling. A token at 25h is still
@@ -176,6 +194,37 @@ mod tests {
         assert_eq!(hours_until(now + 7_200, now), 2);
         assert_eq!(hours_until(now - 3_600, now), -1);
         assert_eq!(hours_until(now, now), 0);
+    }
+
+    #[test]
+    fn days_until_counts_whole_utc_days() {
+        let exp_day = days_from_civil(2026, 8, 15); // civil-day index of the expiry date
+        let exp = "2026-08-15";
+        // Midday the day before -> 1 day remaining (floors to the next-day boundary).
+        assert_eq!(
+            days_until(exp, (exp_day - 1) * 86_400 + 12 * 3_600),
+            Some(1)
+        );
+        // Midday on the expiry day -> 0 ("expires today").
+        assert_eq!(days_until(exp, exp_day * 86_400 + 12 * 3_600), Some(0));
+        // Two days past -> -2 (already expired): the case that used to render "Expires today".
+        assert_eq!(days_until(exp, (exp_day + 2) * 86_400 + 3_600), Some(-2));
+        // Unparseable -> None: the guard the frontend lacked (it rendered "Expires in NaN days").
+        assert_eq!(days_until("not-a-date", exp_day * 86_400), None);
+    }
+
+    #[test]
+    fn parse_expiry_clamps_leap_second_to_same_minute() {
+        // A leap second (:60) clamps to :59 of the SAME minute, never rolling into the next minute.
+        assert_eq!(
+            parse_expiry("2026-08-15 23:59:60 UTC"),
+            parse_expiry("2026-08-15 23:59:59 UTC")
+        );
+        // It must NOT equal the next day's midnight, which a raw +60s roll would produce.
+        assert_ne!(
+            parse_expiry("2026-08-15 23:59:60 UTC"),
+            Some(days_from_civil(2026, 8, 16) * 86_400)
+        );
     }
 
     #[test]

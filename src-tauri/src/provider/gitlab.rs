@@ -137,25 +137,32 @@ impl Provider for GitlabProvider {
     }
 
     async fn token_health(&self) -> Result<TokenHealth, ProviderError> {
-        let resp = self.get("/personal_access_tokens/self").await?;
-        // Do NOT use classify() (it maps 403 -> Unauthorized). Here 401 = dead token;
-        // 403 (token lacks read_api scope to introspect itself) and 404 (endpoint absent on
-        // pre-16.0 instances) both mean "expiry unavailable but NOT dead" -> degrade to None;
-        // any other non-2xx is transient.
+        // Liveness via /user, which works for ANY GitLab token type (personal AND project access
+        // tokens). A 401 here is a genuinely dead token regardless of type; any other non-2xx is
+        // transient (caller keeps prior state). This is the fix for project access tokens being
+        // wrongly auth-failed: /personal_access_tokens/self (a personal-token-only endpoint) 401s
+        // for a perfectly valid project token, so it must NOT be the liveness signal.
+        let resp = self.get("/user").await?;
         match resp.status().as_u16() {
-            200..=299 => {
-                let pat: GlPatSelf = resp.json().await.map_err(redact_json_err)?;
+            200..=299 => {}
+            401 => return Err(ProviderError::Unauthorized),
+            c => return Err(ProviderError::Http(c)),
+        }
+        // Liveness confirmed. Best-effort expiry from the PAT self-introspection endpoint. A 2xx
+        // that reports the token revoked/inactive is still a dead token (defense in depth). Any
+        // other outcome (401 for a project token, 403 missing read_api scope, 404 pre-16.0 instance,
+        // or a transient blip) degrades to "expiry unknown" rather than failing the whole check.
+        let expires_at = match self.get("/personal_access_tokens/self").await {
+            Ok(r) if (200..300).contains(&r.status().as_u16()) => {
+                let pat: GlPatSelf = r.json().await.map_err(redact_json_err)?;
                 if pat.revoked || !pat.active {
                     return Err(ProviderError::Unauthorized);
                 }
-                Ok(TokenHealth {
-                    expires_at: pat.expires_at,
-                })
+                pat.expires_at
             }
-            401 => Err(ProviderError::Unauthorized),
-            403 | 404 => Ok(TokenHealth { expires_at: None }),
-            c => Err(ProviderError::Http(c)),
-        }
+            _ => None,
+        };
+        Ok(TokenHealth { expires_at })
     }
 
     async fn list_projects(&self) -> Result<Vec<DiscoveredProject>, ProviderError> {
@@ -284,6 +291,19 @@ mod tests {
 
     fn provider(server: &MockServer) -> GitlabProvider {
         GitlabProvider::new(build_http_client(), server.uri(), "test-token")
+    }
+
+    /// Mount a 200 `/user` so `token_health` passes its liveness probe and proceeds to read expiry
+    /// from `/personal_access_tokens/self`. Token health probes `/user` first (the token-type-
+    /// agnostic liveness endpoint), so every expiry-path test needs this.
+    async fn mount_user_ok(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "alice"
+            })))
+            .mount(server)
+            .await;
     }
 
     #[tokio::test]
@@ -418,6 +438,7 @@ mod tests {
     #[tokio::test]
     async fn token_health_self_returns_expiry() {
         let server = MockServer::start().await;
+        mount_user_ok(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/v4/personal_access_tokens/self"))
             .and(header("PRIVATE-TOKEN", "test-token"))
@@ -432,8 +453,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn token_health_project_token_alive_without_expiry() {
+        // A valid GitLab *project* access token cannot self-introspect via
+        // /personal_access_tokens/self (it is not a personal access token), so that endpoint 401s.
+        // Liveness must come from /user (which works for any token type): the token is ALIVE with no
+        // known expiry, NOT auth-failed. Regression guard for the "project token wrongly auth-failed"
+        // bug.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "project_bot"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let health = provider(&server).token_health().await.unwrap();
+        assert_eq!(
+            health.expires_at, None,
+            "a project token is alive (via /user) with no introspectable expiry"
+        );
+    }
+
+    #[tokio::test]
     async fn token_health_null_expiry_is_none() {
         let server = MockServer::start().await;
+        mount_user_ok(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/v4/personal_access_tokens/self"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -448,7 +498,10 @@ mod tests {
 
     #[tokio::test]
     async fn token_health_revoked_is_unauthorized() {
+        // Liveness passes (/user 200) but the self endpoint reports the token revoked/inactive: the
+        // defense-in-depth secondary signal still flags it dead.
         let server = MockServer::start().await;
+        mount_user_ok(&server).await;
         Mock::given(method("GET"))
             .and(path("/api/v4/personal_access_tokens/self"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -462,10 +515,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn token_health_401_is_unauthorized() {
+    async fn token_health_user_401_is_unauthorized() {
+        // A dead token (any type): /user is the liveness probe, so a 401 there is the auth-failure.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v4/personal_access_tokens/self"))
+            .and(path("/api/v4/user"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;
@@ -475,10 +529,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn token_health_404_and_403_degrade_to_none() {
-        // Old instance (404) or scope-restricted token (403): expiry unavailable, but NOT dead.
+    async fn token_health_self_404_and_403_degrade_to_none() {
+        // Liveness passes (/user 200); the self endpoint is unavailable (404 old instance) or
+        // forbidden (403 missing scope): expiry unknown, but the token is NOT dead.
         for code in [404u16, 403] {
             let server = MockServer::start().await;
+            mount_user_ok(&server).await;
             Mock::given(method("GET"))
                 .and(path("/api/v4/personal_access_tokens/self"))
                 .respond_with(ResponseTemplate::new(code))
