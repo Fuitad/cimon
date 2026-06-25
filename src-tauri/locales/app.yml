@@ -47,6 +47,15 @@ _version: 2
 "notify.expiry_body":
   en: "The token expires within %{hours}h. Update it in Settings."
   fr: "Le jeton expire dans moins de %{hours} h. Mettez-le à jour dans les paramètres."
+# Credential-store unavailable (no OS secret service reachable). Shared by the poller notification
+# and the Linux startup dialog. On Linux this means no Secret Service provider (GNOME Keyring or
+# KWallet) is running; macOS Keychain and Windows Credential Manager are part of the OS.
+"notify.keychain_unavailable_title":
+  en: "CIMon can't access your credential store"
+  fr: "CIMon ne peut pas accéder à votre trousseau"
+"notify.keychain_unavailable_body":
+  en: "CIMon couldn't reach a system secret service (GNOME Keyring or KWallet) to read or save access tokens. Monitoring is paused until one is available."
+  fr: "CIMon n'a pas pu joindre un service de secrets du système (GNOME Keyring ou KWallet) pour lire ou enregistrer les jetons d'accès. La surveillance est en pause jusqu'à ce qu'un service soit disponible."
 
 "tray.open_settings":
   en: "Open Settings"

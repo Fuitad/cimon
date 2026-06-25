@@ -118,6 +118,16 @@ pub fn format_expiry_warning(account: &str, hours: i64, locale: &str) -> (String
     )
 }
 
+/// Build the localized `(title, body)` for a credential-store-unavailable alert. Shared by the
+/// poller notification and the Linux startup dialog: both report that no OS secret service could
+/// be reached, so tokens can be neither read nor saved until one is available.
+pub fn format_keychain_unavailable(locale: &str) -> (String, String) {
+    (
+        rust_i18n::t!("notify.keychain_unavailable_title", locale = locale).to_string(),
+        rust_i18n::t!("notify.keychain_unavailable_body", locale = locale).to_string(),
+    )
+}
+
 /// Fire a native notification for a token-health event. These are NOT clickable (unlike transition
 /// notifications) and always fire: they are operational alerts about the monitor itself, not CI
 /// noise, so they ignore the pipeline/job `NotificationRules` toggles.
@@ -128,6 +138,7 @@ pub fn notify_token_event(app: &tauri::AppHandle, event: &TokenEvent, locale: &s
         TokenEventKind::ExpiringSoon { hours, .. } => {
             format_expiry_warning(&event.account_label, *hours, locale)
         }
+        TokenEventKind::KeychainUnavailable => format_keychain_unavailable(locale),
     };
     let _ = app.notification().builder().title(title).body(body).show();
 }

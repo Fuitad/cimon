@@ -39,6 +39,9 @@ tauri-plugin-notification = "2"
 # on macOS, Windows, and Linux/XDG. Already in the tree transitively via the notification plugin.
 notify-rust = "4"
 tauri-plugin-autostart = "2"
+# Native message dialogs, used only from Rust at startup to warn (Linux) when the OS credential
+# store is unreachable. Backend-only use needs no capability permission (those gate webview IPC).
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
