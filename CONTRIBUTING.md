@@ -77,8 +77,8 @@ Using German (`de`) as the example, make all five changes together so the langua
 
 Every change must pass the full quality gate.
 
-* The pre-commit hook at `.githooks/pre-commit` runs the lint, format, type, and dead code checks before every commit.
-* CI (`.github/workflows/ci.yml`) runs those same checks, and additionally the test suites, on every push and every pull request.
+* The pre-commit hook at `.githooks/pre-commit` runs the lint, format, type, dead code, and frontend test checks before every commit.
+* CI (`.github/workflows/ci.yml`) runs those same checks, and additionally the Rust test suite (`cargo test`), on every push and every pull request.
 * You can run any command below yourself at any time.
 
 ### Frontend (TypeScript and React)
@@ -88,9 +88,10 @@ Every change must pass the full quality gate.
 | Linting | ESLint | `npm run lint` |
 | Formatting | Prettier | `npm run format:check` (auto fix with `npm run format`) |
 | Static typing | TypeScript | `npm run typecheck` |
+| Tests | Vitest with React Testing Library | `npm run test:run` (watch mode: `npm run test`, coverage: `npm run test:coverage`) |
 | Dead code, unused exports and dependencies | knip | `npm run knip` |
 
-`npm run check` runs all four in sequence.
+`npm run check` runs all five in sequence.
 
 ### Rust (run inside `src-tauri`)
 
@@ -103,7 +104,7 @@ Every change must pass the full quality gate.
 
 Warnings are treated as errors. Clippy runs with `-D warnings` and ESLint runs with zero tolerance for warnings, so a single warning fails the build.
 
-The pre-commit hook runs every check in both tables except `cargo test`, because compiling the test binary for the Tauri dependencies on every commit would be slow. CI runs the tests as well, so run `cargo test` yourself before pushing.
+The pre-commit hook runs every check in both tables except `cargo test`, because compiling the test binary for the Tauri dependencies on every commit would be slow. The frontend test suite (Vitest) is fast, so the hook does run it. CI runs `cargo test` as well, so run it yourself before pushing.
 
 ### The pre-commit hook
 
@@ -113,7 +114,7 @@ The pre-commit hook runs every check in both tables except `cargo test`, because
 .githooks/pre-commit
 ```
 
-The hook runs the same lint and static analysis commands as CI (CI additionally runs the test suites), so a commit that passes the hook will pass CI's lint checks. Bypassing the hook with `git commit --no-verify` is strongly discouraged, because CI runs the same gate and will reject the pull request anyway.
+The hook runs the same lint, static analysis, and frontend test commands as CI, skipping only `cargo test` (which CI additionally runs), so a commit that passes the hook will pass CI's lint checks. Bypassing the hook with `git commit --no-verify` is strongly discouraged, because CI runs the same gate and will reject the pull request anyway.
 
 ### Dependency security
 
@@ -127,12 +128,12 @@ CIMon is developed test first. The expectation for any change in behavior is red
 2. Green. Write the minimum code that makes it pass.
 3. Refactor. Improve the code while the tests stay green.
 
-* New behavior (a function, a Tauri command, a provider method, a state transition) needs a test that exercises that behavior.
+* New behavior (a function, a Tauri command, a provider method, a state transition, a React component or hook) needs a test that exercises that behavior.
 * A bug fix needs a reproducing test that fails before the fix and passes after it. This regression guarantee is not optional.
 * Tests assert observable behavior, not internal implementation details, so a behavior preserving refactor keeps them green.
 * Documentation, configuration, formatting only changes, and dependency bumps do not require tests.
 
-Rust logic is unit tested with mocked I/O: the network through `wiremock`, the keychain through an in memory store. Keep tests parsimonious. One unit test module per production module is the ceiling, not a target.
+Rust logic is unit tested with mocked I/O: the network through `wiremock`, the keychain through an in memory store. The frontend is tested with Vitest and React Testing Library, asserting what the user sees (rendered text, interactions) rather than implementation details. Component tests render against a `cimode` i18n instance (where `t(key)` returns the key verbatim, so a test asserts on a stable key like `accounts.connect` instead of translatable English copy) and mock the Tauri command layer with `vi.mock("../api")`. Keep tests parsimonious. One unit test module per production module is the ceiling, not a target.
 
 ## What gets a pull request rejected
 
