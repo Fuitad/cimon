@@ -77,6 +77,8 @@ Build a release bundle:
 npm run tauri build
 ```
 
+On macOS, `npm run build:mac` instead builds the bundle, installs it into `/Applications`, and code-signs it with a local identity so notification banners appear (an ad-hoc signed build shows notifications only in Notification Center). See [Contributing](CONTRIBUTING.md) for the one-time certificate setup.
+
 Run the frontend tests (Vitest):
 
 ```sh
