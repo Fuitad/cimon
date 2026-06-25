@@ -44,6 +44,8 @@ jobs:
     env:
       CARGO_NET_RETRY: "10"
       CARGO_HTTP_MULTIPLEXING: "false"
+      # Also retry transient npm registry fetch failures (npm's default is 2).
+      npm_config_fetch_retries: "5"
     steps:
       - uses: actions/checkout@v7
 

@@ -14,6 +14,10 @@ jobs:
   frontend:
     name: Frontend (eslint, prettier, tsc, knip, vitest)
     runs-on: ubuntu-latest
+    # Retry transient npm registry fetch failures (npm's default is 2) so a flaky
+    # registry.npmjs.org response doesn't fail the job on a network blip.
+    env:
+      npm_config_fetch_retries: "5"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
