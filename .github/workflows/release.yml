@@ -30,9 +30,10 @@ jobs:
   build:
     name: Build (${{ matrix.platform }} ${{ matrix.target || 'x64' }})
     # Cap the job so an intermittent Apple notary-service hang (notarytool --wait can stall for
-    # hours) fails this leg in under an hour instead of burning the 6-hour runner limit. The fast
-    # Windows/Linux legs finish well under this, so the cap only ever bites a stuck macOS notarize.
-    timeout-minutes: 50
+    # hours) fails this leg instead of burning the 6-hour runner limit. The macOS leg notarizes
+    # twice (the .app via tauri-action, then the .dmg below), so this leaves headroom for two
+    # slow-but-healthy submissions; the fast Windows/Linux legs finish well under it.
+    timeout-minutes: 75
     permissions:
       contents: write
     strategy:
@@ -136,6 +137,40 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # tauri-action notarizes and staples the .app, but the .dmg wrapper it builds is only signed,
+      # not notarized, so a downloaded .dmg would trip Gatekeeper once. Notarize + staple the .dmg
+      # itself for a warning-free open. APPLE_API_KEY_PATH was exported to the env by the key-prep
+      # step; if it is absent the build was unsigned, so this is a clean no-op.
+      - name: Notarize and staple the macOS .dmg
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_PATH:-}" ]; then
+            echo "APPLE_API_KEY_PATH not set; build was not notarized, nothing to staple."
+            exit 0
+          fi
+          dmg=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1 || true)
+          if [ -z "$dmg" ]; then
+            echo "No .dmg found under the universal bundle dir; nothing to notarize."
+            exit 0
+          fi
+          echo "Notarizing $dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+            --wait --timeout 30m
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          # On a tag push, tauri-action already uploaded the un-stapled .dmg to the draft release;
+          # replace that asset with the stapled one. No-op on workflow_dispatch dry runs.
+          if [ "${GITHUB_REF##refs/tags/}" != "$GITHUB_REF" ]; then
+            echo "Replacing the release asset with the stapled .dmg"
+            gh release upload "$GITHUB_REF_NAME" "$dmg" --clobber
+          fi
 
       - name: Upload bundles as run artifacts (manual builds)
         if: github.event_name == 'workflow_dispatch'

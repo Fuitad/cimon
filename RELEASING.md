@@ -118,8 +118,10 @@ codesign -dvv /Applications/CIMon.app 2>&1 | grep Authority
 xcrun stapler validate /Applications/CIMon.app     # confirms the notarization ticket is stapled
 ```
 
-Tauri staples the notarization ticket to both the `.app` and the `.dmg`, so a signed build
-opens with a normal double click and no Gatekeeper warning.
+tauri-action notarizes and staples the `.app`. The workflow then notarizes and staples the
+`.dmg` itself in a follow-up step (Tauri only signs the `.dmg`, it does not notarize it), so the
+downloaded `.dmg` opens with a normal double click and no Gatekeeper warning. The `stapler
+validate` check above should pass for both the `.app` and the `.dmg`.
 
 ## Local development signing
 
