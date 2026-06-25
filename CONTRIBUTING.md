@@ -23,6 +23,16 @@ To enable it, once:
 
 Because the binary now keeps a stable signature across rebuilds, the approval persists and the prompt stops. Without the certificate the runner simply runs the binary unsigned, exactly as before.
 
+### macOS: notification banners need a signed packaged build
+
+`npm run tauri build` ad-hoc signs the app, and macOS will not present an ad-hoc signed app's notifications as banners. They still arrive in Notification Center, just without the banner. Signing the packaged app with a stable identity (the same self-signed `CIMon Dev` certificate above) lets the banners appear. `npm run build:mac` builds the release bundle, installs it into `/Applications`, and signs it with that identity in one step:
+
+```sh
+npm run build:mac
+```
+
+The certificate does not need to be trusted; a stable signature is enough. Without it the command stops and tells you to create one. This is a local convenience for macOS only: it signs with a certificate that lives in your keychain alone, so it does not affect CI or the app other people download. A distributed GitHub release is still ad-hoc signed and shows notifications only in Notification Center, until the project ships a Developer ID signed and notarized build.
+
 ## Project layout
 
 * `src/` holds the React and TypeScript frontend (the settings window and tray menu content).

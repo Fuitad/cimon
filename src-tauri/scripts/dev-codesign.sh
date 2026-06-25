@@ -22,7 +22,11 @@ shift
 case "${bin##*/}" in
   cimon | cimon.exe)
     identity="${CIMON_SIGN_IDENTITY:-CIMon Dev}"
-    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$identity"; then
+    # `find-identity` WITHOUT `-v`: a self-signed "CIMon Dev" certificate is untrusted, so `-v`
+    # (valid identities only) would not list it and the binary would silently run unsigned.
+    # codesign signs with an untrusted identity fine, and a stable signature is all the Keychain
+    # needs for "Always Allow" to persist.
+    if security find-identity -p codesigning 2>/dev/null | grep -qF "$identity"; then
       codesign --force --sign "$identity" --identifier io.github.fuitad.cimon "$bin" >/dev/null 2>&1 ||
         echo "dev-codesign: signing with '$identity' failed; running unsigned" >&2
     fi
