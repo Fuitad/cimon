@@ -23,6 +23,13 @@ jobs:
   cargo-audit:
     name: Rust crates (cargo-audit)
     runs-on: ubuntu-latest
+    # Harden cargo's network layer against transient GitHub-runner HTTP failures, notably the
+    # recurring "[16] Error in the HTTP2 framing layer" curl error during crates.io downloads.
+    # Disabling HTTP/2 multiplexing avoids that framing error on the sparse-index and crate
+    # tarball fetches; the higher retry count absorbs other transient blips.
+    env:
+      CARGO_NET_RETRY: "10"
+      CARGO_HTTP_MULTIPLEXING: "false"
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust toolchain
