@@ -144,6 +144,28 @@ pub fn show(app: &AppHandle) {
     }
 }
 
+/// Dev-only (fixtures mode): open the popover as if the tray icon sat at the top-right of the
+/// primary monitor, so it can be screenshotted without a physical menu-bar click (which an agent
+/// cannot synthesize). The synthetic anchor sits in the menu-bar extras zone, so the popover hangs
+/// just under the bar; nudge it horizontally with `CIMON_FIXTURES_TRAY_X` (logical px in from the
+/// right edge) to line it up under the real CIMon glyph.
+pub fn show_for_fixtures(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(PANEL) {
+        if let Ok(Some(monitor)) = win.primary_monitor() {
+            let size = monitor.size(); // physical pixels
+            let scale = monitor.scale_factor();
+            let inset = std::env::var("CIMON_FIXTURES_TRAY_X")
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .unwrap_or(210.0)
+                * scale;
+            let pos = PhysicalPosition::new(size.width as f64 - inset, 2.0);
+            *TRAY_RECT.lock().unwrap() = Some((pos, PhysicalSize::new(40.0 * scale, 24.0 * scale)));
+        }
+    }
+    show(app);
+}
+
 /// Hide the panel and stamp the hide time so a tray click that caused the blur does not reopen it.
 pub fn hide(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(PANEL) {

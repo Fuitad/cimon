@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod expiry;
+mod fixtures;
 mod i18n;
 mod model;
 mod notify;
@@ -64,6 +65,11 @@ pub fn run() {
                 .expect("failed to resolve app config dir");
             app.manage(commands::AppState::bootstrap(config_dir));
 
+            // Dev-only fixtures mode (see fixtures.rs): when active, the state is seeded with fake
+            // data and we skip the live poller plus the autostart/notice side effects, then
+            // foreground one surface (popover or settings) so it can be screenshotted.
+            let fixtures_active = app.state::<commands::AppState>().fixtures.is_some();
+
             // Pin native notifications to CIMon's identity before the first one can fire (the
             // menu-bar notice below, or a poller transition). Required on macOS, no-op elsewhere.
             notify::init(app.handle());
@@ -79,8 +85,9 @@ pub fn run() {
                 warn_if_credential_store_unavailable(app.handle(), locale);
             }
 
-            // Reconcile OS autostart with the persisted preference.
-            {
+            // Reconcile OS autostart with the persisted preference. Skipped in fixtures mode so a
+            // screenshot run never flips the developer's real login-items entry.
+            if !fixtures_active {
                 let want = app
                     .state::<commands::AppState>()
                     .config
@@ -118,7 +125,11 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 panel_win.on_window_event(move |event| match event {
                     // Clicking outside the panel blurs it -> hide (the menu-bar dismiss behavior).
-                    tauri::WindowEvent::Focused(false) => panel::hide(&app_handle),
+                    // In fixtures mode the panel must stay open while `screencapture` runs (which
+                    // steals focus), so blur-to-dismiss is suppressed there.
+                    tauri::WindowEvent::Focused(false) if !fixtures_active => {
+                        panel::hide(&app_handle)
+                    }
                     // It is borderless with no close button, but guard Cmd/Ctrl+W: hide, don't close.
                     tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
@@ -131,33 +142,43 @@ pub fn run() {
             // First-run UX: show the settings window when there are no accounts yet, otherwise
             // start hidden as a quiet menu-bar app. Window visibility drives the macOS dock icon
             // (see `window`): shown -> dock icon visible, hidden -> dock icon hidden.
-            let has_accounts = !app
-                .state::<commands::AppState>()
-                .config
-                .lock()
-                .unwrap()
-                .accounts
-                .is_empty();
-            if has_accounts {
-                window::hide_main(app.handle());
-                // First hidden launch only: tell the user we live in the menu bar (which macOS
-                // can itself hide when the bar is full), then remember we have shown the notice.
-                let state = app.state::<commands::AppState>();
-                let notice_locale = {
-                    let mut cfg = state.config.lock().unwrap();
-                    if cfg.menu_bar_notice_shown {
-                        None
-                    } else {
-                        cfg.menu_bar_notice_shown = true;
-                        let _ = config::save(&state.config_path, &cfg);
-                        Some(i18n::resolve(&cfg))
-                    }
-                };
-                if let Some(locale) = notice_locale {
-                    notify::notify_running_in_menu_bar(app.handle(), &locale);
+            if fixtures_active {
+                // Foreground the requested surface: the settings window for the settings shot, or
+                // hide it (popover-only) for the menu-bar hero shot. The popover itself is opened
+                // below, after the poller block.
+                match fixtures::surface() {
+                    fixtures::Surface::Settings => window::show_main(app.handle()),
+                    fixtures::Surface::Panel => window::hide_main(app.handle()),
                 }
             } else {
-                window::show_main(app.handle());
+                let has_accounts = !app
+                    .state::<commands::AppState>()
+                    .config
+                    .lock()
+                    .unwrap()
+                    .accounts
+                    .is_empty();
+                if has_accounts {
+                    window::hide_main(app.handle());
+                    // First hidden launch only: tell the user we live in the menu bar (which macOS
+                    // can itself hide when the bar is full), then remember we have shown the notice.
+                    let state = app.state::<commands::AppState>();
+                    let notice_locale = {
+                        let mut cfg = state.config.lock().unwrap();
+                        if cfg.menu_bar_notice_shown {
+                            None
+                        } else {
+                            cfg.menu_bar_notice_shown = true;
+                            let _ = config::save(&state.config_path, &cfg);
+                            Some(i18n::resolve(&cfg))
+                        }
+                    };
+                    if let Some(locale) = notice_locale {
+                        notify::notify_running_in_menu_bar(app.handle(), &locale);
+                    }
+                } else {
+                    window::show_main(app.handle());
+                }
             }
 
             // Closing the window hides it (and the dock icon); the app keeps polling.
@@ -172,67 +193,88 @@ pub fn run() {
             }
 
             // Spawn the background poller. It shares the same Config the commands mutate and
-            // forwards transitions to notifications + the aggregate status to the tray.
-            let config = app.state::<commands::AppState>().config.clone();
-            let http = provider::build_http_client();
-            // Share the command layer's token store (an in-memory cache over the keychain) so the
-            // keychain is read at most once per account per run, not once per poll tick.
-            let tokens = app.state::<commands::AppState>().tokens.clone();
-            let app_for_notify = app.handle().clone();
-            let app_for_tray = app.handle().clone();
-            let app_for_tokens = app.handle().clone();
-            let tray_for_status = tray.clone();
-            tauri::async_runtime::spawn(async move {
-                poller::run_poller(
-                    http,
-                    tokens,
-                    config,
-                    move |transitions| {
-                        let state = app_for_notify.state::<commands::AppState>();
-                        let (rules, locale) = {
-                            let cfg = state.config.lock().unwrap();
-                            (cfg.rules, i18n::resolve(&cfg))
-                        };
-                        for tr in transitions {
-                            notify::notify_transition(
-                                &app_for_notify,
-                                tr,
-                                &tr.project_name,
-                                &rules,
-                                &locale,
-                            );
-                        }
-                    },
-                    move |status, snapshot, token_health| {
-                        // Publish the per-project AND per-account snapshots to shared state in a
-                        // scoped lock (released before anything reads them). The panel reads
-                        // project_status (rows) + token_health (per-row auth-failed flag) via
-                        // get_project_statuses; the settings UI reads token_health via
-                        // get_token_health; the tray glyph reflects the aggregate.
-                        {
-                            let state = app_for_tray.state::<commands::AppState>();
-                            *state.project_status.lock().unwrap() = snapshot.clone();
-                            *state.token_health.lock().unwrap() = token_health.clone();
-                        }
-                        tray::set_status(&tray_for_status, status);
-                        // Nudge an open panel to re-fetch the fresh snapshot (cheap when closed).
-                        panel::notify_changed(&app_for_tray);
-                    },
-                    // Token-health events: fire native auth-failed / expiry notifications, localized
-                    // in the active locale (the background poller runs without a webview).
-                    move |token_events: &[poller::TokenEvent]| {
-                        let state = app_for_tokens.state::<commands::AppState>();
-                        let locale = {
-                            let cfg = state.config.lock().unwrap();
-                            i18n::resolve(&cfg)
-                        };
-                        for ev in token_events {
-                            notify::notify_token_event(&app_for_tokens, ev, &locale);
-                        }
-                    },
-                )
-                .await;
-            });
+            // forwards transitions to notifications + the aggregate status to the tray. Skipped in
+            // fixtures mode (the else branch seeds the tray + popover from fake data instead).
+            if !fixtures_active {
+                let config = app.state::<commands::AppState>().config.clone();
+                let http = provider::build_http_client();
+                // Share the command layer's token store (an in-memory cache over the keychain) so the
+                // keychain is read at most once per account per run, not once per poll tick.
+                let tokens = app.state::<commands::AppState>().tokens.clone();
+                let app_for_notify = app.handle().clone();
+                let app_for_tray = app.handle().clone();
+                let app_for_tokens = app.handle().clone();
+                let tray_for_status = tray.clone();
+                tauri::async_runtime::spawn(async move {
+                    poller::run_poller(
+                        http,
+                        tokens,
+                        config,
+                        move |transitions| {
+                            let state = app_for_notify.state::<commands::AppState>();
+                            let (rules, locale) = {
+                                let cfg = state.config.lock().unwrap();
+                                (cfg.rules, i18n::resolve(&cfg))
+                            };
+                            for tr in transitions {
+                                notify::notify_transition(
+                                    &app_for_notify,
+                                    tr,
+                                    &tr.project_name,
+                                    &rules,
+                                    &locale,
+                                );
+                            }
+                        },
+                        move |status, snapshot, token_health| {
+                            // Publish the per-project AND per-account snapshots to shared state in a
+                            // scoped lock (released before anything reads them). The panel reads
+                            // project_status (rows) + token_health (per-row auth-failed flag) via
+                            // get_project_statuses; the settings UI reads token_health via
+                            // get_token_health; the tray glyph reflects the aggregate.
+                            {
+                                let state = app_for_tray.state::<commands::AppState>();
+                                *state.project_status.lock().unwrap() = snapshot.clone();
+                                *state.token_health.lock().unwrap() = token_health.clone();
+                            }
+                            tray::set_status(&tray_for_status, status);
+                            // Nudge an open panel to re-fetch the fresh snapshot (cheap when closed).
+                            panel::notify_changed(&app_for_tray);
+                        },
+                        // Token-health events: fire native auth-failed / expiry notifications, localized
+                        // in the active locale (the background poller runs without a webview).
+                        move |token_events: &[poller::TokenEvent]| {
+                            let state = app_for_tokens.state::<commands::AppState>();
+                            let locale = {
+                                let cfg = state.config.lock().unwrap();
+                                i18n::resolve(&cfg)
+                            };
+                            for ev in token_events {
+                                notify::notify_token_event(&app_for_tokens, ev, &locale);
+                            }
+                        },
+                    )
+                    .await;
+                });
+            } else {
+                // Fixtures mode: no live poller. Set the tray glyph once to the fixture aggregate,
+                // and (popover surface only) open the anchored panel after the webview settles so it
+                // can be captured.
+                let aggregate = app
+                    .state::<commands::AppState>()
+                    .fixtures
+                    .as_ref()
+                    .map(|f| f.aggregate)
+                    .unwrap_or(None);
+                tray::set_status(&tray, aggregate);
+                if fixtures::surface() == fixtures::Surface::Panel {
+                    let app_for_panel = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        panel::show_for_fixtures(&app_for_panel);
+                    });
+                }
+            }
 
             Ok(())
         })
