@@ -21,4 +21,4 @@ CIMon is in early development. Security fixes are applied to the latest release 
 
 ## How CIMon handles secrets
 
-CIMon stores CI access tokens in the operating system credential store (macOS Keychain, Windows Credential Manager). It never writes them to a plain file and never transmits them anywhere except the GitLab or GitHub instance you configure. Never paste an access token into an issue, a pull request, or a vulnerability report.
+CIMon stores CI access tokens in the operating system credential store (macOS Keychain, Windows Credential Manager, and on Linux the Secret Service API provided by GNOME Keyring or KDE Wallet). It never writes them to a plain file and never transmits them anywhere except the GitLab or GitHub instance you configure. Never paste an access token into an issue, a pull request, or a vulnerability report.
