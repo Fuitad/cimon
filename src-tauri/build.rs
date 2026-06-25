@@ -21,18 +21,38 @@ fn emit_git_sha() {
 
     // Rebuild when HEAD moves so the embedded SHA stays in sync with the working tree on
     // incremental builds. Watch HEAD itself, the branch ref it points at, and packed-refs (a
-    // commit may only update the packed file rather than a loose ref).
-    let git_dir = Path::new("../.git");
-    let head = git_dir.join("HEAD");
-    if head.exists() {
-        println!("cargo:rerun-if-changed=../.git/HEAD");
-        if let Ok(contents) = std::fs::read_to_string(&head) {
+    // commit may only update the packed file rather than a loose ref). Resolve each path via
+    // `git rev-parse --git-path`, which works in a LINKED WORKTREE too: there `.git` is a FILE
+    // pointing into the main repo's `worktrees/` dir, so the old `../.git/HEAD` path join silently
+    // missed and the SHA went stale. Only emit `rerun-if-changed` for paths that actually exist, so
+    // a missing (e.g. packed) ref does not force a rebuild on every invocation.
+    let head_path = git_path("HEAD");
+    let mut watch: Vec<String> = Vec::new();
+    if let Some(head) = &head_path {
+        watch.push(head.clone());
+        if let Ok(contents) = std::fs::read_to_string(head) {
             if let Some(reference) = contents.strip_prefix("ref:").map(str::trim) {
-                println!("cargo:rerun-if-changed=../.git/{reference}");
+                watch.extend(git_path(reference));
             }
         }
-        if git_dir.join("packed-refs").exists() {
-            println!("cargo:rerun-if-changed=../.git/packed-refs");
+    }
+    watch.extend(git_path("packed-refs"));
+    for path in watch {
+        if Path::new(&path).exists() {
+            println!("cargo:rerun-if-changed={path}");
         }
     }
+}
+
+/// Resolve a path inside the git directory via `git rev-parse --git-path <name>`. Unlike joining
+/// onto `../.git`, this correctly handles a linked worktree (where `.git` is a file) and the shared
+/// common dir for refs. Returns `None` when git is unavailable (e.g. a source-tarball build).
+fn git_path(name: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", name])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
 }

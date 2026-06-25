@@ -12,6 +12,13 @@ use crate::secrets::TokenStore;
 /// project id is only unique within its instance/account, hence the account in the key.
 pub type ProjectKey = (String, u64);
 
+/// Minimum seconds between `token_health` checks per account. The check is the authoritative auth +
+/// expiry probe, but running it every poll tick scales HTTP request volume with the poll cadence
+/// (and on GitLab now costs two requests: `/user` + the PAT self endpoint). Throttling it to a
+/// slower cadence keeps the per-tick cost to the project polls; between checks the last-known
+/// auth/expiry state is retained.
+const TOKEN_HEALTH_MIN_INTERVAL_SECS: i64 = 300;
+
 /// A per-project status view for the popover panel rows. Built from [`PollState`] and handed to the
 /// panel (via a command + a per-tick event) so each monitored project can show a colored indicator
 /// plus its current branch, status word, and a relative "updated N ago" time.
@@ -118,6 +125,9 @@ pub struct PollState {
     /// token, while a REPLACED token (different expiry) re-arms both brackets rather than inheriting
     /// the prior token's suppression.
     warned_brackets: HashMap<String, (String, HashSet<i64>)>,
+    /// Epoch seconds of the last `token_health` check per account, to throttle it below the poll
+    /// cadence (see [`TOKEN_HEALTH_MIN_INTERVAL_SECS`]).
+    token_health_checked_at: HashMap<String, i64>,
 }
 
 impl PollState {
@@ -352,6 +362,8 @@ impl PollState {
         self.token_expiry.retain(|a, _| accounts.contains(a));
         self.notified_auth_failed.retain(|a| accounts.contains(a));
         self.warned_brackets.retain(|a, _| accounts.contains(a));
+        self.token_health_checked_at
+            .retain(|a, _| accounts.contains(a));
     }
 }
 
@@ -362,6 +374,7 @@ pub async fn poll_once(
     http: &reqwest::Client,
     tokens: &dyn TokenStore,
     cfg: &Config,
+    now: i64,
 ) -> (Vec<Transition>, Vec<TokenEvent>) {
     let mut transitions = Vec::new();
     let mut token_events = Vec::new();
@@ -384,61 +397,77 @@ pub async fn poll_once(
         );
 
         // A display name for token-health notifications: the user's label, or the resolved username
-        // when no label was set (mirrors the panel's account-name fallback).
-        let acct_label = if acct.label.is_empty() {
-            acct.identity.username.clone()
-        } else {
-            acct.label.clone()
+        // when no label was set (mirrors the panel's account-name fallback). Built lazily so a tick
+        // that emits no token event allocates nothing.
+        let make_label = || {
+            if acct.label.is_empty() {
+                acct.identity.username.clone()
+            } else {
+                acct.label.clone()
+            }
         };
 
-        // Token health FIRST: the authoritative auth + expiry signal, distinct from the per-project
-        // polling path below (one cheap request per monitored account, reusing the token read above).
-        // SHORTCUT: token_health runs every poll tick; if request volume becomes a concern, add a
-        // per-account min-interval throttle so it runs at most every N minutes instead of every tick.
-        match provider.token_health().await {
-            Err(ProviderError::Unauthorized) => {
-                // Dead token: flag the account, mark all its projects stale, SKIP polling them this
-                // tick (they would only 401 too), and notify once per failure episode.
-                state.auth_failed.insert(acct.id.clone());
-                state.token_expiry.insert(acct.id.clone(), None);
-                for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
-                    state.mark_stale(&(acct.id.clone(), mp.project_id));
-                }
-                if state.notified_auth_failed.insert(acct.id.clone()) {
-                    token_events.push(TokenEvent {
-                        account_id: acct.id.clone(),
-                        account_label: acct_label.clone(),
-                        kind: TokenEventKind::AuthFailed,
-                    });
-                }
-                continue;
-            }
-            Ok(health) => {
-                // Healthy: clear any auth-failure (re-arms a future failure) and record expiry.
-                state.auth_failed.remove(&acct.id);
-                state.notified_auth_failed.remove(&acct.id);
-                state
-                    .token_expiry
-                    .insert(acct.id.clone(), health.expires_at.clone());
-                if let Some(exp) = &health.expires_at {
-                    if let Some(bracket) =
-                        state.expiry_warning(&acct.id, exp, crate::expiry::now_unix())
-                    {
+        // Token health: the authoritative auth + expiry signal, distinct from the per-project
+        // polling path below. Throttled to at most once per TOKEN_HEALTH_MIN_INTERVAL_SECS per
+        // account so it does not fire an HTTP request on every tick; between checks the prior
+        // auth/expiry state is retained.
+        let due_for_health = match state.token_health_checked_at.get(&acct.id) {
+            Some(&last) => now - last >= TOKEN_HEALTH_MIN_INTERVAL_SECS,
+            None => true,
+        };
+
+        if due_for_health {
+            state.token_health_checked_at.insert(acct.id.clone(), now);
+            match provider.token_health().await {
+                Err(ProviderError::Unauthorized) => {
+                    // Dead token: flag the account, mark all its projects stale, SKIP polling them
+                    // this tick (they would only 401 too), and notify once per failure episode.
+                    state.auth_failed.insert(acct.id.clone());
+                    state.token_expiry.insert(acct.id.clone(), None);
+                    for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
+                        state.mark_stale(&(acct.id.clone(), mp.project_id));
+                    }
+                    if state.notified_auth_failed.insert(acct.id.clone()) {
                         token_events.push(TokenEvent {
                             account_id: acct.id.clone(),
-                            account_label: acct_label.clone(),
-                            kind: TokenEventKind::ExpiringSoon {
-                                hours: bracket,
-                                expires_at: exp.clone(),
-                            },
+                            account_label: make_label(),
+                            kind: TokenEventKind::AuthFailed,
                         });
                     }
+                    continue;
+                }
+                Ok(health) => {
+                    // Healthy: clear any auth-failure (re-arms a future failure) and record expiry.
+                    state.auth_failed.remove(&acct.id);
+                    state.notified_auth_failed.remove(&acct.id);
+                    state
+                        .token_expiry
+                        .insert(acct.id.clone(), health.expires_at.clone());
+                    if let Some(exp) = &health.expires_at {
+                        if let Some(bracket) = state.expiry_warning(&acct.id, exp, now) {
+                            token_events.push(TokenEvent {
+                                account_id: acct.id.clone(),
+                                account_label: make_label(),
+                                kind: TokenEventKind::ExpiringSoon {
+                                    hours: bracket,
+                                    expires_at: exp.clone(),
+                                },
+                            });
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Transient (rate-limit / 5xx / network): leave prior auth + expiry state intact
+                    // and fall through to poll projects best-effort.
                 }
             }
-            Err(_) => {
-                // Transient (rate-limit / 5xx / network): leave prior auth + expiry state intact
-                // and fall through to poll projects best-effort.
+        } else if state.auth_failed.contains(&acct.id) {
+            // Not yet due for a re-check and already known dead: skip polling its projects (they
+            // would only 401), mirroring the dead path above but without re-notifying.
+            for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
+                state.mark_stale(&(acct.id.clone(), mp.project_id));
             }
+            continue;
         }
 
         for mp in cfg.monitored.iter().filter(|m| m.account_id == acct.id) {
@@ -516,7 +545,8 @@ pub async fn run_poller<F, G, H>(
         let cfg = config.lock().unwrap().clone();
         // Defensive floor in case an invalid value ever slips past validation.
         let interval_secs = cfg.poll_interval_secs.max(MIN_POLL_SECS);
-        let (transitions, token_events) = poll_once(&mut state, &http, &*tokens, &cfg).await;
+        let (transitions, token_events) =
+            poll_once(&mut state, &http, &*tokens, &cfg, crate::expiry::now_unix()).await;
         if !transitions.is_empty() {
             on_transitions(&transitions);
         }
@@ -585,7 +615,7 @@ mod tests {
         };
 
         let mut state = PollState::default();
-        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert!(first.is_empty(), "first poll baselines, emits nothing");
         // The run was fetched, parsed and status-mapped through GithubProvider.
         assert_eq!(state.aggregate_status(), Some(PipelineStatus::Failed));
@@ -789,7 +819,7 @@ mod tests {
         tokens.store("acct", "tok").unwrap();
         let cfg = job_level_cfg(&server, true);
         let mut state = PollState::default();
-        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert!(first.is_empty(), "first poll baselines pipelines AND jobs");
     }
 
@@ -815,7 +845,7 @@ mod tests {
         tokens.store("acct", "tok").unwrap();
         let cfg = job_level_cfg(&server, false);
         let mut state = PollState::default();
-        let _ = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let _ = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
     }
 
     /// One account, one monitored project (id 1), with `job_level` set as given.
@@ -902,7 +932,7 @@ mod tests {
 
         let mut state = PollState::default();
         // First poll baselines project 1 (no transitions); project 2 errors and is skipped.
-        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let (first, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert!(first.is_empty());
         // Project 1's running pipeline is tracked despite project 2 failing.
         assert_eq!(state.aggregate_status(), Some(PipelineStatus::Running));
@@ -931,7 +961,7 @@ mod tests {
             ..Config::default()
         };
         let mut state = PollState::default();
-        let (out, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let (out, _) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert!(out.is_empty());
         assert_eq!(
             tokens.reads(),
@@ -979,7 +1009,7 @@ mod tests {
 
         // The only poll hits a dead address: the project never enters `current`.
         let cfg_dead = stale_cfg("http://127.0.0.1:1");
-        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead).await;
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead, 1_000).await;
 
         let snap = state.project_statuses();
         let v = snap
@@ -1032,7 +1062,7 @@ mod tests {
         let mut state = PollState::default();
         // First poll against the live server: seeds last-known status/branch, fresh (not stale).
         let cfg_live = stale_cfg(&server.uri());
-        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live).await;
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live, 1_000).await;
         let fresh = state.project_statuses();
         let v = fresh.get(&key).expect("present after a good poll");
         assert_eq!(v.status, Some(PipelineStatus::Success));
@@ -1042,7 +1072,7 @@ mod tests {
         // Second poll against a dead address: the fetch errors, so the project is marked stale
         // but keeps its last-known status and branch (no flicker to unknown).
         let cfg_dead = stale_cfg("http://127.0.0.1:1");
-        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead).await;
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead, 1_000).await;
         let after = state.project_statuses();
         let v = after
             .get(&key)
@@ -1056,7 +1086,7 @@ mod tests {
         assert!(v.stale, "a failed poll marks the project stale");
 
         // Third poll back against the live server clears the stale flag.
-        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live).await;
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live, 1_000).await;
         let recovered = state.project_statuses();
         assert!(
             !recovered.get(&key).unwrap().stale,
@@ -1121,9 +1151,9 @@ mod tests {
     #[tokio::test]
     async fn token_health_unauthorized_flags_account_skips_polls_emits_once() {
         let server = MockServer::start().await;
-        // token_health -> 401 (dead token).
+        // token_health probes /user for liveness; a 401 there is the dead token (any token type).
         Mock::given(method("GET"))
-            .and(path("/api/v4/personal_access_tokens/self"))
+            .and(path("/api/v4/user"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;
@@ -1140,7 +1170,7 @@ mod tests {
         let cfg = job_level_cfg(&server, false);
         let mut state = PollState::default();
 
-        let (_t, events) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let (_t, events) = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert_eq!(events.len(), 1, "one AuthFailed event on first failure");
         assert!(matches!(events[0].kind, TokenEventKind::AuthFailed));
         assert_eq!(events[0].account_id, "acct");
@@ -1153,14 +1183,61 @@ mod tests {
             "account flagged auth_failed"
         );
 
-        // Second tick: still failing, but no repeat notification (deduped per episode).
-        let (_t2, events2) = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        // Second tick past the health-check throttle window (so token_health genuinely re-runs):
+        // still failing, but no repeat notification (deduped per episode).
+        let (_t2, events2) =
+            poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_400).await;
         assert!(events2.is_empty(), "auth-failure notifies once per episode");
+    }
+
+    #[tokio::test]
+    async fn token_health_throttled_to_one_request_per_interval() {
+        // token_health must NOT fire an HTTP request every tick. Two ticks within the throttle
+        // window perform the health check (here, the self-introspection request) at most once.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"username": "u"})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/1/pipelines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+        // `.expect(1)`: the throttled self endpoint is hit exactly once across the two ticks.
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "active": true, "revoked": false, "expires_at": null
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acct", "tok").unwrap();
+        let cfg = job_level_cfg(&server, false);
+        let mut state = PollState::default();
+        // Two ticks 60s apart -> well inside the 300s window -> token_health runs only on the first.
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_060).await;
+        // wiremock verifies `.expect(1)` when `server` drops at end of scope.
     }
 
     #[tokio::test]
     async fn token_health_recovery_clears_auth_failed() {
         let server = MockServer::start().await;
+        // Liveness passes (/user 200), then expiry is read from the self endpoint.
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "u"
+            })))
+            .mount(&server)
+            .await;
         Mock::given(method("GET"))
             .and(path("/api/v4/personal_access_tokens/self"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1184,7 +1261,7 @@ mod tests {
         state.auth_failed.insert("acct".to_string());
         state.notified_auth_failed.insert("acct".to_string());
 
-        let _ = poll_once(&mut state, &build_http_client(), &tokens, &cfg).await;
+        let _ = poll_once(&mut state, &build_http_client(), &tokens, &cfg, 1_000).await;
         assert!(
             !state
                 .token_health_snapshot()

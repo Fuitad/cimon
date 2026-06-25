@@ -114,21 +114,56 @@ describe("AccountsSection", () => {
 
   it("flags an account whose token health reports auth failure", async () => {
     vi.mocked(getTokenHealth).mockResolvedValue([
-      { account_id: "acc-1", auth_failed: true, expires_at: null },
+      { account_id: "acc-1", auth_failed: true, expires_at: null, expires_in_days: null },
     ]);
     renderWithI18n(<AccountsSection accounts={[account]} onAccountsChanged={vi.fn()} />);
 
     expect(await screen.findByText("accounts.tokenInvalid")).toBeInTheDocument();
   });
 
-  it("shows an expiry warning for a token expiring within the warning window", async () => {
-    const soon = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+  it("shows an expiry warning from the backend-computed day count", async () => {
     vi.mocked(getTokenHealth).mockResolvedValue([
-      { account_id: "acc-1", auth_failed: false, expires_at: soon },
+      { account_id: "acc-1", auth_failed: false, expires_at: "2026-08-15", expires_in_days: 2 },
     ]);
     renderWithI18n(<AccountsSection accounts={[account]} onAccountsChanged={vi.fn()} />);
 
     expect(await screen.findByText("accounts.expiresInDays")).toBeInTheDocument();
+  });
+
+  it("renders 'expired' for an already-past expiry, not a reassuring label", async () => {
+    vi.mocked(getTokenHealth).mockResolvedValue([
+      { account_id: "acc-1", auth_failed: false, expires_at: "2020-01-01", expires_in_days: -5 },
+    ]);
+    renderWithI18n(<AccountsSection accounts={[account]} onAccountsChanged={vi.fn()} />);
+
+    expect(await screen.findByText("accounts.expired")).toBeInTheDocument();
+    expect(screen.queryByText("accounts.expiresToday")).toBeNull();
+  });
+
+  it("renders 'expiry unknown' (never NaN) when the backend could not parse the expiry", async () => {
+    vi.mocked(getTokenHealth).mockResolvedValue([
+      { account_id: "acc-1", auth_failed: false, expires_at: "garbage", expires_in_days: null },
+    ]);
+    renderWithI18n(<AccountsSection accounts={[account]} onAccountsChanged={vi.fn()} />);
+
+    expect(await screen.findByText("accounts.expiryUnknown")).toBeInTheDocument();
+  });
+
+  it("does not double-fetch token health when updating a token", async () => {
+    renderWithI18n(<AccountsSection accounts={[account]} onAccountsChanged={vi.fn()} />);
+    const u = user();
+    // One fetch on mount; clear it so we count only what the update triggers.
+    await screen.findByRole("button", { name: "accounts.updateToken" });
+    vi.mocked(getTokenHealth).mockClear();
+
+    await u.click(screen.getByRole("button", { name: "accounts.updateToken" }));
+    const row = screen.getByRole("listitem");
+    await u.type(within(row).getByLabelText("accounts.token"), "newtok");
+    await u.click(within(row).getByRole("button", { name: "accounts.save" }));
+
+    // The update no longer calls refreshHealth() directly; with a static accounts prop the only
+    // refresh path (the accounts-identity effect) does not re-fire, so there is no extra fetch.
+    expect(getTokenHealth).not.toHaveBeenCalled();
   });
 
   it("updates an account token in place via the inline editor", async () => {

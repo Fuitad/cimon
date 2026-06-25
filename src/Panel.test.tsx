@@ -89,6 +89,18 @@ describe("Panel", () => {
     expect(screen.queryByText("panel.summaryRunning")).toBeNull();
   });
 
+  it("reports running over a single unreachable project in the header", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([
+      row({ project_id: 1, name: "api", status: "running" }),
+      // Never polled successfully and currently failing -> "unreachable".
+      row({ project_id: 2, name: "web", status: null, stale: true }),
+    ]);
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.summaryRunning")).toBeInTheDocument();
+    expect(screen.queryByText("panel.summaryUnreachable")).toBeNull();
+  });
+
   it("summarizes all-passing when every project succeeds", async () => {
     vi.mocked(getProjectStatuses).mockResolvedValue([
       row({ project_id: 1, status: "success" }),

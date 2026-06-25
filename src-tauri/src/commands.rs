@@ -319,8 +319,13 @@ pub struct PanelProject {
 pub struct AccountTokenHealth {
     pub account_id: String,
     pub auth_failed: bool,
-    /// Raw provider expiry string, or `None` (no expiry / not yet known). Frontend renders relative.
+    /// Raw provider expiry string, or `None` (no expiry / not yet known). Presence drives whether the
+    /// frontend shows an expiry line at all; the days value below drives what it says.
     pub expires_at: Option<String>,
+    /// Whole UTC days until expiry (negative once past, `0` on the expiry day), or `None` when there
+    /// is no expiry OR the provider string could not be parsed. Computed in Rust (single source of
+    /// truth) so the frontend renders this integer instead of re-parsing the date itself.
+    pub expires_in_days: Option<i64>,
 }
 
 /// Shared application state managed by Tauri and used by all commands.
@@ -559,15 +564,20 @@ pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProje
 fn build_token_health(
     cfg: &Config,
     health: &HashMap<String, TokenHealthView>,
+    now: i64,
 ) -> Vec<AccountTokenHealth> {
     cfg.accounts
         .iter()
         .map(|a| {
             let v = health.get(&a.id);
+            let expires_at = v.and_then(|h| h.expires_at.clone());
             AccountTokenHealth {
                 account_id: a.id.clone(),
                 auth_failed: v.is_some_and(|h| h.auth_failed),
-                expires_at: v.and_then(|h| h.expires_at.clone()),
+                expires_in_days: expires_at
+                    .as_deref()
+                    .and_then(|s| crate::expiry::days_until(s, now)),
+                expires_at,
             }
         })
         .collect()
@@ -577,7 +587,7 @@ fn build_token_health(
 pub fn get_token_health(state: tauri::State<'_, AppState>) -> Vec<AccountTokenHealth> {
     let cfg = state.config.lock().unwrap();
     let health = state.token_health.lock().unwrap();
-    build_token_health(&cfg, &health)
+    build_token_health(&cfg, &health, crate::expiry::now_unix())
 }
 
 /// Replace the token for an existing account in place (the only way to recover from an expired or
@@ -622,24 +632,39 @@ async fn update_account_token_logic(
     // cache, so the poller's next `get` returns the new token and polling resumes with it.
     tokens.store(account_id, &token).map_err(storage_err)?;
 
-    // Refresh the stored identity and persist (tokens never live in the config file). On a save
-    // failure, restore the in-memory identity AND the prior token before returning, so the command
-    // is transactional: a reported failure leaves the stored token unchanged.
-    let save_result = {
+    // Refresh the stored identity and persist (tokens never live in the config file); on a save
+    // failure the keychain is rolled back below, so a reported failure leaves the stored token
+    // unchanged. If the account VANISHED between our read above and now (a concurrent
+    // `remove_account`), signal its absence so we can drop the just-stored token rather than leave
+    // it orphaned in the keychain for a now-nonexistent account.
+    let account_present_save = {
         let mut guard = cfg.lock().unwrap();
-        let pos = guard.accounts.iter().position(|a| a.id == account_id);
-        let old_identity = pos.map(|i| guard.accounts[i].identity.clone());
-        if let Some(i) = pos {
-            guard.accounts[i].identity = identity.clone();
-        }
-        let res = config::save(cfg_path, &guard);
-        if res.is_err() {
-            if let (Some(i), Some(old)) = (pos, old_identity) {
-                guard.accounts[i].identity = old;
+        match guard.accounts.iter().position(|a| a.id == account_id) {
+            None => None,
+            Some(i) => {
+                let old_identity = guard.accounts[i].identity.clone();
+                guard.accounts[i].identity = identity.clone();
+                let res = config::save(cfg_path, &guard);
+                if res.is_err() {
+                    guard.accounts[i].identity = old_identity;
+                }
+                Some(res)
             }
         }
-        res
     };
+
+    let save_result = match account_present_save {
+        // Account removed concurrently: drop the credential we just wrote so none is orphaned.
+        None => {
+            let _ = tokens.delete(account_id);
+            return Err(CommandError::new(
+                CommandErrorKind::NotFound,
+                "account not found",
+            ));
+        }
+        Some(res) => res,
+    };
+
     if let Err(e) = save_result {
         // Roll the keychain back to the prior token (or drop it if there was none).
         match old_token {
@@ -653,9 +678,17 @@ async fn update_account_token_logic(
         return Err(storage_err(e));
     }
 
-    // Clear any stale auth-failed / expiry state so the UI reflects recovery immediately; the next
-    // poll re-checks with the new token and repopulates this entry.
-    token_health.lock().unwrap().remove(account_id);
+    // Seed the runtime health from the NEW token so the settings UI shows recovery AND the new
+    // expiry immediately, instead of blanking until the next poll tick repopulates it. Best-effort:
+    // a failed/unavailable health check just leaves the expiry empty until the poller fills it.
+    let fresh_health = client.token_health().await.ok();
+    token_health.lock().unwrap().insert(
+        account_id.to_string(),
+        TokenHealthView {
+            auth_failed: false,
+            expires_at: fresh_health.and_then(|h| h.expires_at),
+        },
+    );
 
     Ok(identity)
 }
@@ -1170,26 +1203,43 @@ mod tests {
                 expires_at: Some("2026-08-15".into()),
             },
         )]);
-        let out = build_token_health(&cfg, &health);
+        // `now` = midnight UTC on 2026-08-10, so a 2026-08-15 expiry is exactly 5 whole days out.
+        let now = crate::expiry::parse_expiry("2026-08-10").unwrap();
+        let out = build_token_health(&cfg, &health, now);
         assert_eq!(out.len(), 2);
         let a = out.iter().find(|x| x.account_id == "a").unwrap();
         assert_eq!(a.expires_at.as_deref(), Some("2026-08-15"));
+        assert_eq!(
+            a.expires_in_days,
+            Some(5),
+            "days are computed in Rust, not re-parsed in the frontend"
+        );
         assert!(!a.auth_failed);
-        // Account 'b' has no snapshot entry yet -> healthy defaults.
+        // Account 'b' has no snapshot entry yet -> healthy defaults, no expiry, no days.
         let b = out.iter().find(|x| x.account_id == "b").unwrap();
         assert!(!b.auth_failed);
         assert_eq!(b.expires_at, None);
+        assert_eq!(b.expires_in_days, None);
     }
 
     #[tokio::test]
-    async fn update_account_token_replaces_token_and_clears_health() {
+    async fn update_account_token_seeds_fresh_health_on_swap() {
         let server = MockServer::start().await;
-        // The NEW token validates via GitLab /user.
+        // The NEW token validates via GitLab /user (also the liveness probe for the post-swap
+        // health seed).
         Mock::given(method("GET"))
             .and(path("/api/v4/user"))
             .and(header("PRIVATE-TOKEN", "new-tok"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "username": "alice", "name": "Alice", "email": null
+            })))
+            .mount(&server)
+            .await;
+        // The post-swap health seed reads the new token's expiry from the self endpoint.
+        Mock::given(method("GET"))
+            .and(path("/api/v4/personal_access_tokens/self"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "active": true, "revoked": false, "expires_at": "2026-08-15"
             })))
             .mount(&server)
             .await;
@@ -1230,8 +1280,103 @@ mod tests {
         assert_eq!(cfg.lock().unwrap().accounts[0].identity.username, "alice");
         let saved = std::fs::read_to_string(&path).unwrap();
         assert!(!saved.contains("new-tok"), "token leaked into config file");
-        // Auth-failed state cleared so the UI shows recovery immediately.
-        assert!(!health.lock().unwrap().contains_key("acc-1"));
+        // Health is seeded from the new token immediately (not blanked until the next poll): the
+        // entry is present, auth cleared, and the new expiry is shown right away.
+        let h = health.lock().unwrap();
+        let seeded = h
+            .get("acc-1")
+            .expect("health seeded immediately on swap, not removed");
+        assert!(!seeded.auth_failed, "auth-failed cleared on a valid swap");
+        assert_eq!(
+            seeded.expires_at.as_deref(),
+            Some("2026-08-15"),
+            "the new token's expiry is shown immediately"
+        );
+        drop(h);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// A token store that removes the account from `cfg` the first time `store` is called, injecting
+    /// a concurrent `remove_account` at the exact point an update writes the new token (between its
+    /// validate/read and its config save). Lets the orphan race be exercised deterministically.
+    struct RemovingStore {
+        inner: MemoryTokenStore,
+        cfg: Arc<Mutex<Config>>,
+        fired: Mutex<bool>,
+    }
+
+    impl RemovingStore {
+        fn count(&self) -> usize {
+            self.inner.count()
+        }
+    }
+
+    impl TokenStore for RemovingStore {
+        fn store(&self, id: &str, token: &str) -> Result<(), crate::secrets::TokenStoreError> {
+            let mut fired = self.fired.lock().unwrap();
+            if !*fired {
+                *fired = true;
+                self.cfg.lock().unwrap().accounts.clear(); // the concurrent remove lands here
+            }
+            self.inner.store(id, token)
+        }
+        fn get(
+            &self,
+            id: &str,
+        ) -> Result<Option<crate::secrets::SecretToken>, crate::secrets::TokenStoreError> {
+            self.inner.get(id)
+        }
+        fn delete(&self, id: &str) -> Result<(), crate::secrets::TokenStoreError> {
+            self.inner.delete(id)
+        }
+    }
+
+    #[tokio::test]
+    async fn update_account_token_deletes_orphan_if_account_removed() {
+        // The account is concurrently removed between the update's validate and its save. The just-
+        // stored token must be dropped (not orphaned) and the command must report NotFound.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "username": "alice", "name": null, "email": null
+            })))
+            .mount(&server)
+            .await;
+
+        let path = temp_path("upd-orphan");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let cfg = Arc::new(Mutex::new(Config {
+            accounts: vec![account("acc-1", ProviderKind::Gitlab, &server.uri())],
+            ..Config::default()
+        }));
+        let inner = MemoryTokenStore::new();
+        inner.store("acc-1", "old-tok").unwrap();
+        let tokens = RemovingStore {
+            inner,
+            cfg: Arc::clone(&cfg),
+            fired: Mutex::new(false),
+        };
+        let health = Mutex::new(HashMap::new());
+
+        let err = update_account_token_logic(
+            &build_http_client(),
+            &tokens,
+            &cfg,
+            &path,
+            &health,
+            "acc-1",
+            "new-tok".into(),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.kind, CommandErrorKind::NotFound);
+        assert_eq!(
+            tokens.count(),
+            0,
+            "no credential orphaned for the concurrently-removed account"
+        );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

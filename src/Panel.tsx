@@ -128,9 +128,11 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   if (failed > 0) return { text: t("panel.summaryFailing", { count: failed }), tone: "danger" };
   if (authFailed > 0)
     return { text: t("panel.summaryAuthFailed", { count: authFailed }), tone: "danger" };
+  // Running outranks unreachable: one project that can't connect must not mask "N running" in the
+  // headline. The offline project is still surfaced per-row (grey dot + "can't connect").
+  if (running > 0) return { text: t("panel.summaryRunning", { count: running }), tone: "running" };
   if (unreachable > 0)
     return { text: t("panel.summaryUnreachable", { count: unreachable }), tone: "muted" };
-  if (running > 0) return { text: t("panel.summaryRunning", { count: running }), tone: "running" };
   if (pending > 0) return { text: t("panel.summaryPending", { count: pending }), tone: "pending" };
   if (checking === total) return { text: t("panel.summaryChecking"), tone: "muted" };
   if (success === total) return { text: t("panel.summaryAllPassing"), tone: "ok" };

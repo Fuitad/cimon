@@ -353,8 +353,9 @@ const TOKENHEALTH_ACCOUNTS: Account[] = [
   },
 ];
 const TOKENHEALTH_HEALTH: AccountTokenHealth[] = [
-  { account_id: "th-dead", auth_failed: true, expires_at: null },
-  { account_id: "th-exp", auth_failed: false, expires_at: inDays(2) },
+  { account_id: "th-dead", auth_failed: true, expires_at: null, expires_in_days: null },
+  // The backend computes the day count; the preview mirrors it (~2 days out).
+  { account_id: "th-exp", auth_failed: false, expires_at: inDays(2), expires_in_days: 2 },
 ];
 const TOKENHEALTH_PANEL: PanelProject[] = [
   { ...PANEL_FIXTURE[0], account_id: "th-dead", account_label: "Prod GitLab", auth_failed: true },

@@ -97,8 +97,13 @@ export interface AccountTokenHealth {
   account_id: string;
   auth_failed: boolean;
   /** Raw provider expiry string (e.g. "2026-08-15" or "2026-08-15 14:23:01 UTC"), or `null` when
-   *  the token has no expiry / has not been checked yet. */
+   *  the token has no expiry / has not been checked yet. Presence drives whether an expiry line is
+   *  shown; `expires_in_days` drives what it says. */
   expires_at: string | null;
+  /** Whole UTC days until expiry (negative once past, 0 on the expiry day), computed by the backend.
+   *  `null` when there is no expiry OR the provider string could not be parsed. The frontend renders
+   *  this value instead of re-parsing the date itself. */
+  expires_in_days: number | null;
 }
 
 /** App version and build identity, for confirming which build is running. Mirrors Rust `AppInfo`. */

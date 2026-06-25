@@ -59,6 +59,8 @@
     "expiresToday": "Expire aujourd'hui",
     "expiresInDays_one": "Expire dans {{count}} jour",
     "expiresInDays_other": "Expire dans {{count}} jours",
+    "expired": "Expiré",
+    "expiryUnknown": "Expiration inconnue",
     "error": {
       "unauthorized": "Jeton refusé. Vérifiez le jeton et sa portée.",
       "invalid_base_url": "URL d'instance invalide. Elle doit commencer par https.",
