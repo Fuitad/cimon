@@ -4,6 +4,33 @@ CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app 
 
 > Status: early development. CIMon monitors GitLab and GitHub pipelines, including self-managed GitLab and GitHub Enterprise instances, on macOS, Windows, and Linux. Builds are not yet code-signed (see [Download and install](#download-and-install)).
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <img src="docs/images/popover-status.png" alt="CIMon menu bar popover showing live pipeline status" width="320"><br>
+      <sub>The menu bar popover shows live status for every project you monitor.</sub>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <img src="docs/images/popover-multi-account.png" alt="CIMon popover grouping projects by account" width="320"><br>
+      <sub>Projects are grouped by account once you connect more than one.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <img src="docs/images/settings-projects.png" alt="CIMon settings showing accounts and project selection" width="420"><br>
+      <sub>Connect accounts and pick which projects to watch.</sub>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <img src="docs/images/settings-token-health.png" alt="CIMon settings flagging token health" width="420"><br>
+      <sub>Token health is surfaced in Settings: a revoked token and one expiring soon.</sub>
+    </td>
+  </tr>
+</table>
+
+> The screenshots use built-in demo data, not real repositories. See [Demo data for screenshots](#demo-data-for-screenshots).
+
 ## Why CIMon
 
 * It lives where you can glance at it. A true menu bar item on macOS and a real tray icon on Windows, with the icon reflecting the worst current status across the projects you monitor.
@@ -93,6 +120,20 @@ Run the Rust unit tests:
 ```sh
 cd src-tauri && cargo test
 ```
+
+### Demo data for screenshots
+
+The screenshots in this README come from a built-in fixtures mode that fills the app with fabricated projects, so no real repository is ever shown. It runs only in a development build (it is compiled out of release builds) and is driven by environment variables:
+
+```sh
+# Menu bar popover with a spread of statuses, dark theme
+CIMON_FIXTURES=panel CIMON_FIXTURES_THEME=dark npm run tauri dev
+
+# Settings window with two accounts, light theme
+CIMON_FIXTURES=multi CIMON_FIXTURES_SURFACE=settings CIMON_FIXTURES_THEME=light npm run tauri dev
+```
+
+`CIMON_FIXTURES` selects the dataset (`panel`, `multi`, or `tokenhealth`). `CIMON_FIXTURES_SURFACE` selects what to show (`panel` for the menu bar popover, `settings` for the settings window). `CIMON_FIXTURES_THEME` forces the appearance (`light`, `dark`, or `system`). In this mode CIMon skips the live poller and reads no accounts or tokens, so it never touches your real configuration.
 
 ### Code quality
 

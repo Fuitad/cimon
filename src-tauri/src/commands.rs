@@ -345,6 +345,10 @@ pub struct AppState {
     /// panel (`auth_failed` per project) and the settings UI (`get_token_health`). Empty until the
     /// first poll completes; runtime-only (never persisted).
     pub token_health: Arc<Mutex<HashMap<String, TokenHealthView>>>,
+    /// `Some` only in dev-only fixtures mode (see `fixtures.rs`): carries the fabricated discovered
+    /// tree (served by `list_discovered_projects`) and the one-shot tray aggregate. `None` in normal
+    /// operation, where the live poller drives everything.
+    pub fixtures: Option<crate::fixtures::FixtureState>,
 }
 
 /// A dev-only file-backed token store, or `None` to fall back to the OS keychain.
@@ -373,6 +377,28 @@ impl AppState {
     /// Build state from the app config directory: load config, apply its locale, and set up the
     /// HTTP client and token store.
     pub fn bootstrap(config_dir: PathBuf) -> Self {
+        // Dev-only fixtures mode: seed the whole state from fabricated data instead of reading the
+        // real config, and point `config_path` at a throwaway temp file so any stray save can never
+        // clobber the user's real `config.json`. The poller is skipped in `lib.rs`, so the keychain
+        // is never touched (the token store below is built but unused). `active()` is hard-`None` on
+        // release builds, so this branch is unreachable in a shipped binary.
+        if let Some(mode) = crate::fixtures::active() {
+            let fx = crate::fixtures::build(mode, crate::expiry::now_unix());
+            i18n::apply(&fx.config);
+            return AppState {
+                config: Arc::new(Mutex::new(fx.config)),
+                http: build_http_client(),
+                tokens: Arc::new(CachingTokenStore::new(Box::new(KeyringStore::new()))),
+                config_path: std::env::temp_dir().join("cimon-fixtures-config.json"),
+                project_status: Arc::new(Mutex::new(fx.project_status)),
+                token_health: Arc::new(Mutex::new(fx.token_health)),
+                fixtures: Some(crate::fixtures::FixtureState {
+                    discovered: fx.discovered,
+                    aggregate: fx.aggregate,
+                }),
+            };
+        }
+
         let config_path = config_dir.join("config.json");
         let cfg = config::load(&config_path);
         i18n::apply(&cfg);
@@ -389,6 +415,7 @@ impl AppState {
             config_path,
             project_status: Arc::new(Mutex::new(HashMap::new())),
             token_health: Arc::new(Mutex::new(HashMap::new())),
+            fixtures: None,
         }
     }
 }
@@ -430,6 +457,10 @@ pub async fn list_discovered_projects(
     state: tauri::State<'_, AppState>,
     account_id: String,
 ) -> Result<Vec<DiscoveredProject>, CommandError> {
+    // Fixtures mode serves the fabricated tree without touching the network (no token to poll with).
+    if let Some(fx) = &state.fixtures {
+        return Ok(fx.discovered.get(&account_id).cloned().unwrap_or_default());
+    }
     list_discovered_logic(&state.http, &*state.tokens, &state.config, &account_id).await
 }
 
