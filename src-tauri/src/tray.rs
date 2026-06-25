@@ -167,8 +167,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 /// Create the tray icon with its fallback menu and click handlers. Call once during setup.
 ///
 /// Left-click toggles the popover panel; right-click shows the fallback menu (the menu does not
-/// appear on left-click). Every tray event is forwarded to the positioner plugin so it can cache
-/// the icon rect for anchoring the panel.
+/// appear on left-click). Every tray event is forwarded to the panel so it can cache the icon
+/// rect for anchoring the popover.
 pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     let menu = build_menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
@@ -188,8 +188,8 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            // Keep the positioner's cached tray-icon rect fresh so the panel anchors correctly.
-            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+            // Keep the panel's cached tray-icon rect fresh so the popover anchors correctly.
+            crate::panel::on_tray_event(&event);
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
