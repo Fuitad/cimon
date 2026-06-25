@@ -12,7 +12,7 @@ CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app 
 
 ## Privacy
 
-CIMon is fully standalone. It runs entirely on your machine and talks directly to the CI provider you configure. There is no CIMon cloud service, no CIMon account, and no telemetry. Your access token is stored in the operating system credential store (macOS Keychain, Windows Credential Manager), never in a plain file, and it is never sent anywhere except the GitLab or GitHub instance you point it at.
+CIMon is fully standalone. It runs entirely on your machine and talks directly to the CI provider you configure. There is no CIMon cloud service, no CIMon account, and no telemetry. Your access token is stored in the operating system credential store (macOS Keychain, Windows Credential Manager, and on Linux the Secret Service API provided by GNOME Keyring or KDE Wallet), never in a plain file, and it is never sent anywhere except the GitLab or GitHub instance you point it at.
 
 ## Features
 
