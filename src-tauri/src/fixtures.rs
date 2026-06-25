@@ -25,6 +25,9 @@ use crate::provider::DiscoveredProject;
 
 /// Which fabricated dataset to render.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// A distributed release build never constructs these: `active()` is the `None` stub there and the
+// constructing parser + tests are compiled out, so "never constructed" is intentional, not dead code.
+#[cfg_attr(not(any(debug_assertions, feature = "dev-tokens")), allow(dead_code))]
 pub enum Mode {
     /// One GitLab account, a full status spread (failed/running/success/pending/offline/checking).
     Panel,
