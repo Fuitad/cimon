@@ -100,6 +100,9 @@ struct GlProject {
     web_url: String,
     /// Present in the `simple=true` project representation; absent only defensively.
     namespace: Option<GlNamespace>,
+    /// The project's default branch. Present on the full single-project endpoint; absent on the
+    /// lighter `simple=true` discovery listing, hence `Option`.
+    default_branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -229,9 +232,19 @@ impl Provider for GitlabProvider {
         project_id: u64,
         _remote_ref: Option<&str>, // GitLab addresses by project_id; the ref is unused.
     ) -> Result<Vec<Pipeline>, ProviderError> {
+        // Scope the project's status to its default branch. GitLab lists pipelines across every
+        // branch and merge request, so a feature-branch or MR pipeline would otherwise drive the
+        // project's status. Fetch the project to learn its default branch, then filter to it.
+        let proj_resp = self.get(&format!("/projects/{project_id}")).await?;
+        if let Some(err) = classify(proj_resp.status().as_u16()) {
+            return Err(err);
+        }
+        let meta: GlProject = proj_resp.json().await.map_err(redact_json_err)?;
+        let default_branch = meta.default_branch.unwrap_or_default();
+
         let resp = self
             .get(&format!(
-                "/projects/{project_id}/pipelines?per_page=20&order_by=updated_at&sort=desc"
+                "/projects/{project_id}/pipelines?ref={default_branch}&per_page=20&order_by=updated_at&sort=desc"
             ))
             .await?;
         if let Some(err) = classify(resp.status().as_u16()) {
@@ -379,10 +392,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_pipelines_maps_status_and_project_id() {
+    async fn list_pipelines_scopes_to_default_branch() {
         let server = MockServer::start().await;
+        // The project is fetched first to learn its default branch.
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 7, "name": "app", "web_url": "http://x/p/7", "default_branch": "main"
+            })))
+            .mount(&server)
+            .await;
+        // Pipelines are then requested filtered to that branch.
         Mock::given(method("GET"))
             .and(path("/api/v4/projects/7/pipelines"))
+            .and(query_param("ref", "main"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
                 {"id": 10, "status": "failed", "ref": "main", "sha": "abc123",
                  "web_url": "http://x/p/10", "updated_at": "2026-06-20T00:00:00Z"}
@@ -425,8 +448,9 @@ mod tests {
     #[tokio::test]
     async fn http_500_is_http_error() {
         let server = MockServer::start().await;
+        // The project metadata fetch is the first request; a 500 there surfaces as Http(500).
         Mock::given(method("GET"))
-            .and(path("/api/v4/projects/7/pipelines"))
+            .and(path("/api/v4/projects/7"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;

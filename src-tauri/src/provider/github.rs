@@ -100,6 +100,9 @@ struct GhRepo {
     full_name: String,
     html_url: String,
     owner: GhOwner,
+    /// The repo's default branch. Present on the single-repo endpoint; absent on the lighter
+    /// project-discovery listing, hence `Option`.
+    default_branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -112,6 +115,9 @@ struct GhRun {
     id: u64,
     head_branch: Option<String>,
     head_sha: Option<String>,
+    /// Triggering event. GitHub's managed workflows (e.g. the "Dependabot Updates" updater) report
+    /// `dynamic`; real CI runs report `push`, `pull_request`, `schedule`, etc.
+    event: Option<String>,
     status: String,
     conclusion: Option<String>,
     html_url: String,
@@ -209,8 +215,21 @@ impl Provider for GithubProvider {
     ) -> Result<Vec<Pipeline>, ProviderError> {
         let repo = remote_ref
             .ok_or_else(|| ProviderError::Network("missing repository identifier".into()))?;
+
+        // Scope the project's status to its default branch. A repo fans out into runs on many
+        // branches (Dependabot PR branches, feature branches); the user monitors the repo's
+        // mainline health, not whatever branch last ran. Fetch the repo to learn its default branch.
+        let repo_resp = self.get(&format!("/repos/{repo}")).await?;
+        if let Some(err) = classify(repo_resp.status().as_u16()) {
+            return Err(err);
+        }
+        let meta: GhRepo = repo_resp.json().await.map_err(redact_json_err)?;
+        let default_branch = meta.default_branch.unwrap_or_default();
+
         let resp = self
-            .get(&format!("/repos/{repo}/actions/runs?per_page=20"))
+            .get(&format!(
+                "/repos/{repo}/actions/runs?branch={default_branch}&per_page=20"
+            ))
             .await?;
         if let Some(err) = classify(resp.status().as_u16()) {
             return Err(err);
@@ -219,6 +238,10 @@ impl Provider for GithubProvider {
         Ok(body
             .workflow_runs
             .into_iter()
+            // Drop GitHub's managed/bot runs (the "Dependabot Updates" updater and similar report
+            // event=dynamic): they run on the default branch but are housekeeping, not the repo's
+            // CI, so their failures must not redden the project.
+            .filter(|r| r.event.as_deref() != Some("dynamic"))
             .map(|r| Pipeline {
                 id: r.id,
                 project_id,
@@ -367,16 +390,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_pipelines_unwraps_workflow_runs_and_maps_status() {
+    async fn list_pipelines_scopes_to_default_branch_and_drops_managed_runs() {
         let server = MockServer::start().await;
+        // The repo is fetched first to learn its default branch.
+        Mock::given(method("GET"))
+            .and(path("/api/v3/repos/acme/web-app"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "name": "web-app", "full_name": "acme/web-app",
+                "html_url": "https://github.com/acme/web-app",
+                "owner": {"login": "acme"}, "default_branch": "main"
+            })))
+            .mount(&server)
+            .await;
+        // Runs are then requested filtered to that branch. A managed (event=dynamic) run on the
+        // same branch must be dropped so housekeeping workflows cannot redden the project.
         Mock::given(method("GET"))
             .and(path("/api/v3/repos/acme/web-app/actions/runs"))
+            .and(query_param("branch", "main"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "total_count": 1,
+                "total_count": 2,
                 "workflow_runs": [
-                    {"id": 55, "head_branch": "main", "head_sha": "abc123",
+                    {"id": 55, "head_branch": "main", "head_sha": "abc123", "event": "push",
                      "status": "completed", "conclusion": "failure",
                      "html_url": "https://github.com/acme/web-app/actions/runs/55",
+                     "updated_at": "2026-06-23T00:00:00Z"},
+                    {"id": 56, "head_branch": "main", "head_sha": "abc123", "event": "dynamic",
+                     "status": "completed", "conclusion": "failure",
+                     "html_url": "https://github.com/acme/web-app/actions/runs/56",
                      "updated_at": "2026-06-23T00:00:00Z"}
                 ]
             })))
@@ -387,7 +427,7 @@ mod tests {
             .list_pipelines(7, Some("acme/web-app"))
             .await
             .unwrap();
-        assert_eq!(pipes.len(), 1);
+        assert_eq!(pipes.len(), 1, "the managed event=dynamic run is dropped");
         assert_eq!(pipes[0].id, 55);
         assert_eq!(pipes[0].project_id, 7);
         assert_eq!(pipes[0].status, PipelineStatus::Failed);
@@ -448,8 +488,9 @@ mod tests {
     #[tokio::test]
     async fn http_500_is_http_error() {
         let server = MockServer::start().await;
+        // The repo metadata fetch is the first request; a 500 there surfaces as Http(500).
         Mock::given(method("GET"))
-            .and(path("/api/v3/repos/acme/web-app/actions/runs"))
+            .and(path("/api/v3/repos/acme/web-app"))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;

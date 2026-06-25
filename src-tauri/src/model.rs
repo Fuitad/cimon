@@ -86,6 +86,13 @@ impl PipelineStatus {
         }
     }
 
+    /// Whether a run is still in flight: queued or running, i.e. it has no terminal conclusion yet.
+    /// Used to keep a multi-run commit "in progress" until every run settles, so a sibling that has
+    /// already failed never pre-empts a run that is still going (see `poller::aggregate_current`).
+    pub fn is_in_flight(&self) -> bool {
+        matches!(self, PipelineStatus::Running | PipelineStatus::Pending)
+    }
+
     /// rust-i18n catalog key for the user-facing status word (NOT the serde wire string).
     pub fn i18n_key(&self) -> &'static str {
         match self {
