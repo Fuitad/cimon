@@ -62,7 +62,7 @@ CIMon stores your access tokens through the Secret Service API, so a provider su
 
 ## Requirements (development)
 
-* Node.js 20.19 or newer (Vite 7 requires 20.19+, or 22.12+) and npm
+* Node.js 20.19 or newer (Vite 8 requires 20.19+, or 22.12+) and npm
 * Rust (stable) and Cargo
 * Platform build tools for Tauri (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 
