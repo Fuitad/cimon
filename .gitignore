@@ -46,6 +46,7 @@ docs/prd
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 DESIGN.md
 PRODUCT.md
 

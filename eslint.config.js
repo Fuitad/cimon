@@ -4,11 +4,12 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
+import { defineConfig, globalIgnores } from "eslint/config";
 
 // Flat config. App code (src/) runs in the browser/webview; the root build configs run in Node.
 // `eslint-config-prettier` is last so it disables stylistic rules that Prettier owns.
-export default tseslint.config(
-  { ignores: ["dist", "coverage", "node_modules", "src-tauri/**"] },
+export default defineConfig(
+  globalIgnores(["dist", "coverage", "node_modules", "src-tauri/**"]),
   {
     files: ["src/**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
