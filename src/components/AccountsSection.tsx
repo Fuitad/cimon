@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
@@ -134,7 +134,11 @@ function AccountsSection({ accounts, onAccountsChanged }: AccountsSectionProps) 
     }
   };
 
-  const onSubmit = async (e: FormEvent) => {
+  // React 19's types mark FormEvent (and FormEventHandler) @deprecated, yet a <form onSubmit>
+  // handler still receives one and there is no non-deprecated React type for it. FormEvent is an
+  // empty extension of SyntheticEvent, so we annotate with SyntheticEvent: an identical type with
+  // no deprecation hint. Deliberate silence, not a behavior change.
+  const onSubmit = async (e: SyntheticEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
