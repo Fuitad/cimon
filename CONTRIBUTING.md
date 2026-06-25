@@ -104,7 +104,7 @@ Every change must pass the full quality gate.
 
 Warnings are treated as errors. Clippy runs with `-D warnings` and ESLint runs with zero tolerance for warnings, so a single warning fails the build.
 
-The pre-commit hook runs every check in both tables except `cargo test`, because compiling the test binary for the Tauri dependencies on every commit would be slow. The frontend test suite (Vitest) is fast, so the hook does run it. CI runs `cargo test` as well, so run it yourself before pushing.
+The pre-commit hook runs every check in both tables except `cargo test`, because compiling the test binary for the Tauri dependencies on every commit would be slow. It also skips `cargo-machete` when that tool is not installed locally (CI installs it first, then runs it). The frontend test suite (Vitest) is fast, so the hook does run it. CI runs `cargo test` as well, so run it yourself before pushing.
 
 ### The pre-commit hook
 
@@ -114,7 +114,7 @@ The pre-commit hook runs every check in both tables except `cargo test`, because
 .githooks/pre-commit
 ```
 
-The hook runs the same lint, static analysis, and frontend test commands as CI, skipping only `cargo test` (which CI additionally runs), so a commit that passes the hook will pass CI's lint checks. Bypassing the hook with `git commit --no-verify` is strongly discouraged, because CI runs the same gate and will reject the pull request anyway.
+The hook runs the same lint, static analysis, and frontend test commands as CI, skipping `cargo test` (which CI runs in addition) and `cargo-machete` when it is not installed locally (CI installs it first). With `cargo-machete` installed, a commit that passes the hook will pass CI's lint checks. Bypassing the hook with `git commit --no-verify` is strongly discouraged, because CI runs the same gate and will reject the pull request anyway.
 
 ### Dependency security
 
@@ -133,7 +133,7 @@ CIMon is developed test first. The expectation for any change in behavior is red
 * Tests assert observable behavior, not internal implementation details, so a behavior preserving refactor keeps them green.
 * Documentation, configuration, formatting only changes, and dependency bumps do not require tests.
 
-Rust logic is unit tested with mocked I/O: the network through `wiremock`, the keychain through an in memory store. The frontend is tested with Vitest and React Testing Library, asserting what the user sees (rendered text, interactions) rather than implementation details. Component tests render against a `cimode` i18n instance (where `t(key)` returns the key verbatim, so a test asserts on a stable key like `accounts.connect` instead of translatable English copy) and mock the Tauri command layer with `vi.mock("../api")`. Keep tests parsimonious. One unit test module per production module is the ceiling, not a target.
+Rust logic is unit tested with mocked I/O: the network through `wiremock`, the keychain through an in memory store. The frontend is tested with Vitest and React Testing Library, asserting what the user sees (rendered text, interactions) rather than implementation details. Component tests render against a `cimode` i18n instance (where `t(key)` returns the key verbatim, so a test asserts on a stable key like `accounts.connect` instead of translatable English copy) and mock the Tauri command layer by mocking the `src/api.ts` module with `vi.mock` (the specifier is relative to the test file, so `./api` for a test directly under `src/` and `../api` for one under `src/components/`). Keep tests parsimonious. One unit test module per production module is the ceiling, not a target.
 
 ## What gets a pull request rejected
 
