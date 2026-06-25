@@ -1,9 +1,21 @@
 name: Release
 
-# Builds real, installable binaries for macOS (Apple Silicon + Intel) and Windows (x64).
+# Builds real, installable binaries for macOS (one universal Apple Silicon + Intel package),
+# Windows (x64), and Linux (x64).
 # Push a version tag (e.g. v0.1.0) to cut a draft GitHub Release with the installers attached.
 # Or run manually (workflow_dispatch) to build the bundles and download them as run artifacts
 # without creating a release.
+#
+# The macOS package is Developer ID signed and notarized when these repository secrets are set
+# (Settings > Secrets and variables > Actions). Until then the macOS build falls back to an
+# unsigned ad-hoc build, exactly as before, so the workflow is safe to run without them. See
+# RELEASING.md for how to generate each value.
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12 certificate
+#   APPLE_CERTIFICATE_PASSWORD  password chosen when exporting that .p12
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_API_ISSUER            App Store Connect API key Issuer ID (for notarization)
+#   APPLE_API_KEY               App Store Connect API key ID (for notarization)
+#   APPLE_API_KEY_BASE64        base64 of the AuthKey_<KEYID>.p8 private key file
 on:
   push:
     tags:
@@ -23,17 +35,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest # Apple Silicon (M1+)
-            target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - platform: macos-latest # Intel
-            target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
+          - platform: macos-latest # One universal package (Apple Silicon + Intel)
+            target: universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
           - platform: windows-latest # x64
             target: ""
+            rust_targets: ""
             args: ""
           - platform: ubuntu-22.04 # x64 (.deb, .rpm, .AppImage)
             target: ""
+            rust_targets: ""
             args: ""
     runs-on: ${{ matrix.platform }}
     # Harden cargo's network layer against transient GitHub-runner HTTP failures, notably the
@@ -57,7 +69,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          # macOS installs both arch targets so the universal build can lipo them together.
+          targets: ${{ matrix.rust_targets }}
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -82,11 +95,34 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Prepare App Store Connect API key (macOS notarization)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          if [ -z "${APPLE_API_KEY_BASE64}" ]; then
+            echo "APPLE_API_KEY_BASE64 not set; skipping notarization key setup (build will not be notarized)."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          key_path="$RUNNER_TEMP/private_keys/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       - name: Build app and bundle installers
         uses: tauri-apps/tauri-action@v0
         id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS Developer ID signing. Empty on Windows/Linux and until the secrets exist;
+          # Tauri produces an unsigned ad-hoc macOS build when these are blank.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # macOS notarization via App Store Connect API key. APPLE_API_KEY_PATH is exported to
+          # $GITHUB_ENV by the "Prepare App Store Connect API key" step above.
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         with:
           # On a tag push: create/attach to a draft GitHub Release for that tag.
           # On manual runs: tagName is empty, so tauri-action only builds (no release).
