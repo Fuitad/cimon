@@ -1,6 +1,6 @@
 [package]
 name = "cimon"
-version = "0.1.1"
+version = "0.1.2"
 description = "CIMon: a cross-platform CI pipeline monitor for the system tray / menu bar"
 authors = ["Pierre-Luc Brunet <fuitad@gmail.com>"]
 license = "MIT"
