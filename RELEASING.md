@@ -123,6 +123,29 @@ tauri-action notarizes and staples the `.app`. The workflow then notarizes and s
 downloaded `.dmg` opens with a normal double click and no Gatekeeper warning. The `stapler
 validate` check above should pass for both the `.app` and the `.dmg`.
 
+## Homebrew tap
+
+macOS users can install CIMon through a Homebrew cask:
+
+```sh
+brew install --cask fuitad/tap/cimon
+```
+
+The cask lives in the [Fuitad/homebrew-tap](https://github.com/Fuitad/homebrew-tap) repository. The
+`.github/workflows/update-homebrew-tap.yml` workflow keeps it in sync: when a release is published,
+it downloads the universal `.dmg`, computes its checksum, and commits the new version and checksum
+to the tap.
+
+That workflow pushes to a separate repository, which the default `GITHUB_TOKEN` cannot do, so it
+needs one secret on the cimon repository:
+
+- `HOMEBREW_TAP_TOKEN`: a fine-grained personal access token with `contents: write` permission on
+  `Fuitad/homebrew-tap`.
+
+The workflow runs automatically on each published release. You can also run it from the Actions tab
+(the `Update Homebrew tap` workflow) and pass a tag to re-sync a specific version. When you publish
+a release before adding the token, bump the cask by hand or run the workflow once the token exists.
+
 ## Local development signing
 
 Local dev and local packaged builds use a separate self-signed `CIMon Dev` identity purely so
