@@ -71,6 +71,8 @@ Or download `CIMon_<version>_universal.dmg` from the [Releases](https://github.c
 
 ### Windows
 
+Download `CIMon_<version>_x64-setup.exe` from the [Releases](https://github.com/Fuitad/cimon/releases) page and run it. It is a per-user install, so it needs no administrator rights and installs CIMon under your `%LOCALAPPDATA%` folder.
+
 Windows SmartScreen may show a "Windows protected your PC" dialog for the unsigned installer. Click More info, then Run anyway to continue.
 
 ### Linux

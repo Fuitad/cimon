@@ -47,7 +47,10 @@ jobs:
           - platform: windows-latest # x64
             target: ""
             rust_targets: ""
-            args: ""
+            # Ship only the per-user NSIS -setup.exe (installMode currentUser, no admin).
+            # Dropping the default WiX MSI avoids pairing a per-user installer with a
+            # per-machine one. The "Assert Windows installer is NSIS-only" step below enforces it.
+            args: "--bundles nsis"
           - platform: ubuntu-22.04 # x64 (.deb, .rpm, .AppImage)
             target: ""
             rust_targets: ""
@@ -137,6 +140,27 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Enforce the Windows install decision at build time, failing the leg (and so blocking
+      # publication of the draft release, which is reviewed manually per RELEASING.md) if either
+      # half is violated:
+      #   per-user  -> bundle.windows.nsis.installMode must be currentUser (no admin, %LOCALAPPDATA%)
+      #   NSIS-only -> exactly one or more NSIS -setup.exe and zero WiX MSI in the bundle output
+      # The bundle is searched from src-tauri/target (always present post-build) with a path
+      # filter, so an added target triple (target/<triple>/release/bundle) does not break it and
+      # find never aborts the step before its ::error:: diagnostics run.
+      - name: Assert Windows installer is per-user NSIS-only
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode=$(jq -r '.bundle.windows.nsis.installMode // ""' src-tauri/tauri.conf.json)
+          [ "$mode" = "currentUser" ] || { echo "::error::NSIS installMode is '${mode:-unset}', expected currentUser (per-user, no admin)"; exit 1; }
+          msi_count=$(find src-tauri/target -path '*/release/bundle/*' -name '*.msi' 2>/dev/null | wc -l | tr -d ' ')
+          exe_count=$(find src-tauri/target -path '*/release/bundle/*' -name '*-setup.exe' 2>/dev/null | wc -l | tr -d ' ')
+          echo "installMode=$mode  NSIS setup.exe=$exe_count  MSI=$msi_count"
+          [ "$msi_count" -eq 0 ] || { echo "::error::Windows build produced $msi_count .msi file(s); expected NSIS only"; exit 1; }
+          [ "$exe_count" -ge 1 ] || { echo "::error::No NSIS -setup.exe under src-tauri/target/**/release/bundle"; exit 1; }
 
       # tauri-action notarizes and staples the .app, but the .dmg wrapper it builds is only signed,
       # not notarized, so a downloaded .dmg would trip Gatekeeper once. Notarize + staple the .dmg
