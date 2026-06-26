@@ -3,7 +3,9 @@
 CIMon ships through the `Release` GitHub Actions workflow (`.github/workflows/release.yml`).
 Pushing a version tag such as `v0.1.0` builds the installers and attaches them to a draft
 GitHub Release. The macOS artifact is a single universal package (Apple Silicon and Intel in
-one `.dmg`).
+one `.dmg`). The Windows artifact is a single per-user NSIS installer (`-setup.exe`); the
+workflow builds NSIS only, so no per-machine MSI is produced (a CI step fails the build if one
+ever is).
 
 The macOS package is Developer ID signed and notarized when the repository secrets below are
 configured. Without them the workflow still runs and produces an unsigned ad-hoc macOS build,
