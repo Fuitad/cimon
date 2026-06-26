@@ -2,7 +2,7 @@
 
 CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app that lives in your system tray on Windows or your menu bar on macOS and tells you what your CI pipelines are doing. It watches your CI and surfaces pipeline progress as native notifications, so you can stop babysitting browser tabs.
 
-> Status: early development. CIMon monitors GitLab and GitHub pipelines, including self-managed GitLab and GitHub Enterprise instances, on macOS, Windows, and Linux. Builds are not yet code-signed (see [Download and install](#download-and-install)).
+> Status: early development. CIMon monitors GitLab and GitHub pipelines, including self-managed GitLab and GitHub Enterprise instances, on macOS, Windows, and Linux. The macOS build is code-signed and notarized; the Windows build is not yet signed (see [Download and install](#download-and-install)).
 
 ## Screenshots
 
@@ -57,20 +57,11 @@ CIMon is read-only. It monitors and notifies. It does not trigger, re-run, or ca
 
 Pre-built installers for macOS, Windows, and Linux are published on the [Releases](https://github.com/Fuitad/cimon/releases) page. Download the file for your platform and install it the usual way.
 
-These early builds are not yet code-signed, so each operating system shows a warning the first time you open the app. That is expected for an unsigned app in early development. Here is how to get past it.
+The macOS build is code-signed and notarized by Apple, so it opens normally with no Gatekeeper warning. The Windows build is not yet signed, so Windows shows a one-time warning. Here is what to expect on each platform.
 
 ### macOS
 
-macOS Gatekeeper blocks unsigned apps downloaded from the internet. After moving CIMon into your Applications folder:
-
-1. Right-click (or Control-click) CIMon and choose Open.
-2. In the dialog that appears, click Open again.
-
-You only need to do this once. CIMon opens normally afterward. If you prefer the terminal, clear the quarantine flag instead:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/CIMon.app
-```
+CIMon is signed with a Developer ID certificate and notarized by Apple, including the disk image, so it opens with a normal double click. Open the downloaded `.dmg`, drag CIMon into your Applications folder, and launch it. No right-click step or quarantine workaround is needed.
 
 ### Windows
 
