@@ -102,9 +102,21 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
     }
 }
 
+/// The newest pipeline in a project's recent list: the one with the greatest id. Pipeline ids
+/// increase with creation on both providers, so the greatest id is the most-recently-created run.
+///
+/// NOT the list head: GitLab lists by `updated_at desc`, so an older commit that settled most
+/// recently (its completion bumped `updated_at`) can sort ahead of a newer commit that is still
+/// building. Selecting by id keeps the aggregate anchored to the genuinely newest commit, so a
+/// just-passed older pipeline can't mask a still-running newer one (the green-while-building bug).
+fn newest_pipeline(latest: &[Pipeline]) -> Option<&Pipeline> {
+    latest.iter().max_by_key(|p| p.id)
+}
+
 /// Build the representative pipeline whose status the project's aggregate reflects. A single push
 /// fans out into multiple workflow runs sharing one `head_sha` (GitHub runs every matching
-/// workflow); `list_pipelines` returns them newest-first, so `latest[0]` names the newest commit.
+/// workflow); the newest commit is the run with the greatest id (see [`newest_pipeline`]), and its
+/// `sha` names that commit's run group.
 ///
 /// While ANY run of that commit is still in flight ([`is_in_flight`](PipelineStatus::is_in_flight),
 /// i.e. running or queued) the commit as a whole is in flight: the worst in-flight status wins
@@ -115,9 +127,9 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
 ///
 /// The newest run supplies the branch / url / timestamp; only its status is replaced by the
 /// aggregate. GitLab returns one pipeline per commit, so the group is a single run and this
-/// collapses to "the newest pipeline" (a no-op there). Returns `None` for an empty list.
+/// collapses to "the newest pipeline" there. Returns `None` for an empty list.
 fn aggregate_current(latest: &[Pipeline]) -> Option<Pipeline> {
-    let newest = latest.first()?;
+    let newest = newest_pipeline(latest)?;
     let runs = || {
         latest
             .iter()
@@ -179,10 +191,11 @@ impl PollState {
     /// while the poller is already running) seeds state and returns nothing, so pipelines that
     /// predate monitoring never produce notifications.
     ///
-    /// `latest` is expected newest-first (GitLab orders by `updated_at` desc, GitHub by
-    /// `created_at` desc), so `latest[0]` names the newest commit. The project's aggregate status
-    /// spans ALL of that commit's runs (see [`aggregate_current`]), not just the first one, so a
-    /// GitHub push that fans into several workflow runs stays Running until every run settles.
+    /// `latest` carries the project's recent pipelines in no guaranteed order (GitLab lists by
+    /// `updated_at` desc, GitHub by `created_at` desc). The newest commit is identified by greatest
+    /// pipeline id, not list position (see [`newest_pipeline`]). The project's aggregate status
+    /// spans ALL of that commit's runs (see [`aggregate_current`]), so a GitHub push that fans into
+    /// several workflow runs stays Running until every run settles.
     pub fn detect(&mut self, key: &ProjectKey, latest: &[Pipeline]) -> Vec<Transition> {
         // Drive this project's aggregate status from every run of the newest commit, not just the
         // single newest run; an empty list means no current pipeline, so drop any stale entry.
@@ -559,11 +572,12 @@ pub async fn poll_once(
             state.mark_fresh(&key);
             let mut detected = state.detect(&key, &pipelines);
 
-            // Job-level: fetch jobs only for the newest (most-recently-updated) pipeline, so
-            // cost is at most one extra request per project per tick. A job-fetch error is
-            // isolated (skip job detection this tick) just like a pipeline-fetch error.
+            // Job-level: fetch jobs only for the newest commit's pipeline (greatest id, not list
+            // head, since GitLab orders by updated_at), so cost is at most one extra request per
+            // project per tick and the jobs track the same pipeline the aggregate reflects. A
+            // job-fetch error is isolated (skip job detection this tick) like a pipeline-fetch error.
             if cfg.rules.job_level {
-                if let Some(newest) = pipelines.first() {
+                if let Some(newest) = newest_pipeline(&pipelines) {
                     if let Ok(jobs) = provider
                         .list_jobs(mp.project_id, mp.remote_ref.as_deref(), newest.id)
                         .await
@@ -860,6 +874,30 @@ mod tests {
             s.aggregate_status(),
             Some(PipelineStatus::Failed),
             "once every run settles, the worst terminal status wins"
+        );
+    }
+
+    #[test]
+    fn aggregate_follows_newest_commit_not_most_recently_updated() {
+        // Real-world overlap: two pipelines on the default branch for DIFFERENT commits. An older
+        // commit's pipeline finishes Success AFTER a newer commit's pipeline has started, so the
+        // older one carries the LATER `updated_at`. GitLab lists by `updated_at desc`, so the older,
+        // settled pipeline sorts FIRST even though the newer commit's pipeline is still running.
+        // running. Picking the list head would let the settled older run mask the in-flight newer one
+        // shows green while the newer commit builds). The aggregate must follow the newest commit by id.
+        let mut newer_running = pipeline(12, PipelineStatus::Running);
+        newer_running.sha = "commitb".into();
+        newer_running.updated_at = "2026-01-01T10:00:00Z".into();
+        let mut older_success = pipeline(11, PipelineStatus::Success);
+        older_success.sha = "commita".into();
+        older_success.updated_at = "2026-01-01T10:05:00Z".into(); // settled later -> sorts first
+        let mut s = PollState::default();
+        // Order as the provider delivers it: most-recently-updated (the settled older commit) first.
+        s.detect(&key(), &[older_success, newer_running]);
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "a still-building newer commit must not be masked by an older commit that settled later"
         );
     }
 
