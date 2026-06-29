@@ -14,8 +14,9 @@ const DEFAULT_RULES: NotificationRules = {
   on_start: false,
   on_success: true,
   on_fail: true,
-  pipeline_level: true,
-  job_level: false,
+  job_on_start: false,
+  job_on_success: false,
+  job_on_fail: false,
 };
 
 describe("api.ts invoke contract (inside the Tauri shell)", () => {

@@ -32,8 +32,9 @@ const baseConfig: Config = {
     on_start: false,
     on_success: true,
     on_fail: true,
-    pipeline_level: true,
-    job_level: false,
+    job_on_start: false,
+    job_on_success: false,
+    job_on_fail: false,
   },
   poll_interval_secs: 45,
   launch_at_login: false,
@@ -65,8 +66,25 @@ describe("SettingsSection", () => {
       on_start: true,
       on_success: true,
       on_fail: true,
-      pipeline_level: true,
-      job_level: false,
+      job_on_start: false,
+      job_on_success: false,
+      job_on_fail: false,
+    });
+  });
+
+  it("persists a job event toggle as the merged rule set", async () => {
+    renderWithI18n(<SettingsSection />);
+    await screen.findByDisplayValue("45");
+
+    await user().click(screen.getByRole("checkbox", { name: "settings.jobOnFail" }));
+
+    expect(setNotificationRules).toHaveBeenCalledWith({
+      on_start: false,
+      on_success: true,
+      on_fail: true,
+      job_on_start: false,
+      job_on_success: false,
+      job_on_fail: true,
     });
   });
 

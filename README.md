@@ -34,7 +34,7 @@ CIMon (think "Simon", for CI Monitoring) is a small, cross-platform desktop app 
 ## Why CIMon
 
 * It lives where you can glance at it. A true menu bar item on macOS and a real tray icon on Windows, with the icon reflecting the worst current status across the projects you monitor.
-* It is quiet by default and configurable. Choose which events you care about (started, succeeded, failed), at the pipeline level, the job level, or both, and get a native notification only for those.
+* It is quiet by default and configurable. Choose which pipeline events and which job events you care about (started, succeeded, failed for each), and get a native notification only for those.
 * It is fast and light. Built on Tauri v2 (a Rust core with a small web UI), so it uses very little memory while running all day.
 
 ## Privacy
@@ -45,7 +45,7 @@ CIMon is fully standalone. It runs entirely on your machine and talks directly t
 
 * Connect one or more GitLab and GitHub accounts, each with a scoped, read-only access token. An account can point at gitlab.com, a self-managed GitLab instance, github.com, or a GitHub Enterprise instance.
 * Auto-discover the projects your token can access (GitLab projects or GitHub repositories) and pick which ones to monitor.
-* Background polling with native notifications when a monitored pipeline (a GitLab pipeline or a GitHub Actions workflow run), or an individual job within it, starts, succeeds, or fails. Pipeline-level and job-level notifications are independent toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
+* Background polling with native notifications when a monitored pipeline (a GitLab pipeline or a GitHub Actions workflow run), or an individual job within it, starts, succeeds, or fails. Pipeline events and job events each have their own independent started, succeeded, and failed toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
 * Tray / menu bar icon showing the aggregate status across the projects you monitor, with quick links to open a pipeline in your browser.
 * Token health monitoring. If a token becomes invalid, revoked, or expired, the affected account is flagged distinctly in the popover and in Settings (not as a generic connection error), with a one-time notification, and you can replace the token in place from Settings without removing the account. CIMon also warns before a token expires (on launch, then at 72 hours and 24 hours remaining) and shows an "expires in N days" indicator next to each account.
 * Light, dark, or system appearance, with the interface available in English and French.

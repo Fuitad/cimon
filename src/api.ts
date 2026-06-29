@@ -13,6 +13,7 @@ import type {
   ProviderKind,
   UiMode,
 } from "./types";
+import { DEFAULT_NOTIFICATION_RULES } from "./types";
 
 // Tauri v2 maps camelCase JS keys to snake_case Rust parameters automatically.
 
@@ -478,13 +479,7 @@ export const getConfig = (): Promise<Config> =>
             : previewGithub()
               ? []
               : FIXTURE_MONITORED,
-        rules: {
-          on_start: false,
-          on_success: true,
-          on_fail: true,
-          pipeline_level: true,
-          job_level: false,
-        },
+        rules: DEFAULT_NOTIFICATION_RULES,
         poll_interval_secs: 30,
         launch_at_login: false,
         locale: null,

@@ -26,14 +26,30 @@ export interface MonitoredProject {
 }
 
 export interface NotificationRules {
+  /** Notify when a pipeline starts. */
   on_start: boolean;
+  /** Notify when a pipeline succeeds. */
   on_success: boolean;
+  /** Notify when a pipeline fails. */
   on_fail: boolean;
-  /** Notify on pipeline-level transitions. */
-  pipeline_level: boolean;
-  /** Notify on job-level transitions (individual jobs within a pipeline). */
-  job_level: boolean;
+  /** Notify when an individual job starts. */
+  job_on_start: boolean;
+  /** Notify when an individual job succeeds. */
+  job_on_success: boolean;
+  /** Notify when an individual job fails. */
+  job_on_fail: boolean;
 }
+
+/** Quiet-ish default: pipeline completion events on, every job event opt-in. Single source of
+ * truth shared by the settings UI's initial state and the dev-preview fixture. */
+export const DEFAULT_NOTIFICATION_RULES: NotificationRules = {
+  on_start: false,
+  on_success: true,
+  on_fail: true,
+  job_on_start: false,
+  job_on_success: false,
+  job_on_fail: false,
+};
 
 /** Color theme for the app windows. `system` follows the OS appearance. Mirrors Rust `UiMode`. */
 export type UiMode = "system" | "light" | "dark";

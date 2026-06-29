@@ -1,32 +1,34 @@
 //! Native notification dispatch and localized message formatting.
 //!
-//! Notifies at pipeline level and/or job level, gated by the user's two detail toggles.
-//! Messages are localized via `rust-i18n` so the background poller renders them in the active
-//! locale with no dependency on the webview.
+//! Notifies on pipeline transitions and on individual-job transitions, each gated by its own set
+//! of per-event toggles. Messages are localized via `rust-i18n` so the background poller renders
+//! them in the active locale with no dependency on the webview.
 
 use crate::model::NotificationRules;
 use crate::poller::{TokenEvent, TokenEventKind, Transition, TransitionKind};
 
-/// Whether the user's rules ask to be notified about this transition. A transition fires only
-/// when BOTH its event type (start/success/fail) AND its detail level (pipeline vs job) are
-/// enabled. `is_job` is `true` for a job-level transition, `false` for a pipeline-level one.
+/// Whether the user's rules ask to be notified about this transition. Pipeline and job events are
+/// configured independently: a job transition fires on its `job_on_*` toggle, a pipeline transition
+/// on its `on_*` toggle. `is_job` is `true` for a job transition, `false` for a pipeline one.
 pub fn should_notify(rules: &NotificationRules, kind: TransitionKind, is_job: bool) -> bool {
-    let event_on = match kind {
-        TransitionKind::Started => rules.on_start,
-        TransitionKind::Succeeded => rules.on_success,
-        TransitionKind::Failed => rules.on_fail,
-    };
-    let level_on = if is_job {
-        rules.job_level
+    if is_job {
+        match kind {
+            TransitionKind::Started => rules.job_on_start,
+            TransitionKind::Succeeded => rules.job_on_success,
+            TransitionKind::Failed => rules.job_on_fail,
+        }
     } else {
-        rules.pipeline_level
-    };
-    event_on && level_on
+        match kind {
+            TransitionKind::Started => rules.on_start,
+            TransitionKind::Succeeded => rules.on_success,
+            TransitionKind::Failed => rules.on_fail,
+        }
+    }
 }
 
-/// Build the localized `(title, body)` for a transition. A job-level transition (one that
-/// carries a `job`) names the job in the title and reports the job's status; a pipeline-level
-/// one names the pipeline and reports the pipeline's status. The body shows the git ref.
+/// Build the localized `(title, body)` for a transition. A job transition (one that carries a
+/// `job`) names the job in the title and reports the job's status; a pipeline transition names
+/// the pipeline and reports the pipeline's status. The body shows the git ref.
 pub fn format_message(
     transition: &Transition,
     project_name: &str,
@@ -244,15 +246,17 @@ mod tests {
         on_start: bool,
         on_success: bool,
         on_fail: bool,
-        pipeline_level: bool,
-        job_level: bool,
+        job_on_start: bool,
+        job_on_success: bool,
+        job_on_fail: bool,
     ) -> NotificationRules {
         NotificationRules {
             on_start,
             on_success,
             on_fail,
-            pipeline_level,
-            job_level,
+            job_on_start,
+            job_on_success,
+            job_on_fail,
         }
     }
 
@@ -295,36 +299,44 @@ mod tests {
     }
 
     #[test]
-    fn should_notify_requires_both_event_and_detail_level() {
-        // Failures only, pipeline-level only.
-        let r = rules(false, false, true, true, false);
+    fn should_notify_uses_independent_pipeline_and_job_toggles() {
+        // Pipeline failures only; all job events off.
+        let r = rules(false, false, true, false, false, false);
         assert!(
             should_notify(&r, TransitionKind::Failed, false),
             "pipeline fail enabled"
         );
         assert!(
             !should_notify(&r, TransitionKind::Succeeded, false),
-            "success disabled"
+            "pipeline success disabled"
         );
         assert!(
             !should_notify(&r, TransitionKind::Failed, true),
-            "job-level disabled"
+            "job fail disabled even though pipeline fail is on"
         );
 
-        // All events, job-level only (pipeline-level off).
-        let r = rules(true, true, true, false, true);
+        // Job events only (start + fail); all pipeline events off. Independent of pipeline toggles.
+        let r = rules(false, false, false, true, false, true);
         assert!(
             !should_notify(&r, TransitionKind::Started, false),
-            "pipeline-level disabled"
+            "pipeline start disabled"
         );
         assert!(
             should_notify(&r, TransitionKind::Started, true),
-            "job-level enabled"
+            "job start enabled"
+        );
+        assert!(
+            should_notify(&r, TransitionKind::Failed, true),
+            "job fail enabled"
+        );
+        assert!(
+            !should_notify(&r, TransitionKind::Succeeded, true),
+            "job success disabled"
         );
     }
 
     #[test]
-    fn format_message_pipeline_level_en_and_fr() {
+    fn format_message_pipeline_transition_en_and_fr() {
         let tr = pipeline_tr(TransitionKind::Failed, PipelineStatus::Failed);
         assert_eq!(
             format_message(&tr, "web", "en"),
@@ -343,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn format_message_job_level_names_the_job_en_and_fr() {
+    fn format_message_job_transition_names_the_job_en_and_fr() {
         let tr = job_tr(TransitionKind::Failed, "build", PipelineStatus::Failed);
         let (title_en, body_en) = format_message(&tr, "web", "en");
         assert_eq!(title_en, "web: job build failed");
