@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege GITHUB_TOKEN: every job only checks out and reads the repo to lint,
+# typecheck, and test. Nothing writes back to the repo, so contents:read is all that's needed.
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Frontend (eslint, prettier, tsc, knip, vitest)

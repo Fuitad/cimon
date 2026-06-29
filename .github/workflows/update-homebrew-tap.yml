@@ -14,6 +14,11 @@ on:
         description: Release tag to sync (e.g. v0.1.0)
         required: true
 
+# Least-privilege GITHUB_TOKEN: the dmg is fetched over anonymous HTTPS and the push to the
+# tap repo uses HOMEBREW_TAP_TOKEN, so this workflow's own token only needs to read this repo.
+permissions:
+  contents: read
+
 jobs:
   update-cask:
     # Run for stable releases and manual dispatch; skip prereleases.
