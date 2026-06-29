@@ -108,6 +108,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        # windows-latest defaults run: steps to PowerShell, which cannot parse this bash. The other
+        # bash steps that run on Windows (NSIS assert, fragment collect) already pin the bash shell.
+        shell: bash
         run: |
           set -euo pipefail
           [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for signed updater artifacts"; exit 1; }

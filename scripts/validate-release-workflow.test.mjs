@@ -28,6 +28,17 @@ describe("validateReleaseWorkflow", () => {
     ).toThrow(/missing step: Assert updater signing secrets on tag releases/);
   });
 
+  it("rejects the updater secrets assert step without shell: bash (Windows runs pwsh by default)", () => {
+    expect(
+      validateMutatedWorkflow((yaml) =>
+        yaml.replace(
+          '        shell: bash\n        run: |\n          set -euo pipefail\n          [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]',
+          '        run: |\n          set -euo pipefail\n          [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]',
+        ),
+      ),
+    ).toThrow(/Assert updater signing secrets on tag releases/);
+  });
+
   it("rejects a workflow that omits updater fragments from the matrix", () => {
     expect(
       validateMutatedWorkflow((yaml) =>
