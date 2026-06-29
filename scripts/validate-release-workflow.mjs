@@ -65,6 +65,8 @@ export function validateReleaseWorkflow(path) {
 
   assertStep(yaml, "Assert updater signing secrets on tag releases", [
     "if: startsWith(github.ref, 'refs/tags/')",
+    // windows-latest runs run: steps under PowerShell by default, which cannot parse this bash.
+    "shell: bash",
     "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
     "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}",
     '[ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]',
