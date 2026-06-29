@@ -145,6 +145,28 @@ CIMon is developed test first. The expectation for any change in behavior is red
 
 Rust logic is unit tested with mocked I/O: the network through `wiremock`, the keychain through an in memory store. The frontend is tested with Vitest and React Testing Library, asserting what the user sees (rendered text, interactions) rather than implementation details. Component tests render against a `cimode` i18n instance (where `t(key)` returns the key verbatim, so a test asserts on a stable key like `accounts.connect` instead of translatable English copy) and mock the Tauri command layer by mocking the `src/api.ts` module with `vi.mock` (the specifier is relative to the test file, so `./api` for a test directly under `src/` and `../api` for one under `src/components/`). Keep tests parsimonious. One unit test module per production module is the ceiling, not a target.
 
+### Native Tauri E2E
+
+Use browser automation against Vite preview fixtures for deterministic React states, then use the
+native Tauri app for command/event wiring whenever the changed behavior crosses the Tauri bridge.
+On Linux and Windows, install Tauri's WebDriver bridge once:
+
+```sh
+cargo install tauri-driver --locked
+tauri-driver --port 4444 --native-port 4445
+```
+
+`tauri-driver` is an intermediary WebDriver server. It expects a native WebDriver binary on `PATH`,
+or an explicit `--native-driver` path:
+
+* Linux: `WebKitWebDriver`
+* Windows: `msedgedriver.exe`
+
+The current 2.x `tauri-driver` binary is not usable on macOS. Cargo can install it there, but
+running it exits with `tauri-driver is not supported on this platform`. For macOS work, record that
+as the native WebDriver limitation and verify the app with `npm run tauri dev` plus browser preview
+E2E for the deterministic UI path.
+
 ## What gets a pull request rejected
 
 A pull request will not be merged if any of the following is true:

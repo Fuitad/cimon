@@ -52,6 +52,8 @@ zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 rust-i18n = "4"
 sys-locale = "0.3"
+tauri-plugin-updater = "2"
+semver = "1"
 
 [dev-dependencies]
 wiremock = "0.6"

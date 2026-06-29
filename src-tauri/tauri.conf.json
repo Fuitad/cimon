@@ -24,6 +24,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -36,6 +37,14 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdEMTY4NUIyRDdFM0FDRUEKUldUcXJPUFhzb1VXZlMraEN3MjAyQ2VYMTB3d01YVk5rQjVab0tFdmVJYzB6UXR1bUhMMm4zR0MK",
+      "endpoints": [
+        "https://github.com/Fuitad/cimon/releases/latest/download/latest.json"
+      ]
     }
   }
 }

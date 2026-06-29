@@ -14,6 +14,7 @@ import {
   showSettingsWindow,
 } from "./api";
 import { applyUiMode } from "./theme";
+import { useUpdateState } from "./useUpdateState";
 import type { AppInfo, PanelProject } from "./types";
 import "./Panel.css";
 
@@ -153,6 +154,7 @@ function Panel() {
   const [accountCount, setAccountCount] = useState<number | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
   const [build, setBuild] = useState<AppInfo | null>(null);
+  const { update, refreshUpdate, runUpdateAction, dismiss } = useUpdateState("panel");
 
   const headerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -190,7 +192,7 @@ function Panel() {
 
   // The poller (and a monitored-set change) emit this each time the snapshot changes.
   useEffect(() => {
-    const unlisten = listen("status-updated", () => refresh());
+    const unlisten = listen("status-updated", () => refresh()).catch(() => () => {});
     return () => {
       void unlisten.then((fn) => fn());
     };
@@ -202,6 +204,7 @@ function Panel() {
     const onFocus = () => {
       setNow(Date.now());
       refresh();
+      refreshUpdate();
       syncConfig();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -213,7 +216,7 @@ function Panel() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     };
-  }, [refresh, syncConfig]);
+  }, [refresh, refreshUpdate, syncConfig]);
 
   // Keep relative times honest while the panel stays open.
   useEffect(() => {
@@ -237,13 +240,17 @@ function Panel() {
     const ro = new ResizeObserver(measure);
     ro.observe(content);
     return () => ro.disconnect();
-  }, [projects, accountCount]);
+  }, [projects, accountCount, update]);
 
   const dismissOnMarginClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) void hidePanel();
   };
 
   const summary = projects ? summarize(projects, t) : null;
+  const activeUpdate =
+    update?.available && update.dismissed_version !== update.available.version
+      ? update.available
+      : null;
   // Group by account only when more than one account is represented; otherwise a flat list.
   const accountIds = projects ? new Set(projects.map((p) => p.account_id)) : new Set<string>();
   const grouped = accountIds.size > 1;
@@ -347,6 +354,49 @@ function Panel() {
 
         <div className="panel__body">
           <div className="panel__content" ref={contentRef}>
+            {activeUpdate && (
+              <section className="panel-update" aria-label={t("panel.updateAvailable")}>
+                <div className="panel-update__copy">
+                  <span className="panel-update__title">{t("panel.updateAvailable")}</span>
+                  <span className="panel-update__body">
+                    {t("panel.updateVersion", { version: activeUpdate.version })}
+                  </span>
+                  {update?.status === "installing" && update.progress && (
+                    <span className="panel-update__body">
+                      {t("panel.updateInstalling")}
+                      {update.progress.total
+                        ? ` ${Math.round((update.progress.downloaded / update.progress.total) * 100)}%`
+                        : ""}
+                    </span>
+                  )}
+                  {update?.status === "error" && (
+                    <span className="panel-update__body panel-update__error">
+                      {t("panel.updateFailed")}
+                    </span>
+                  )}
+                </div>
+                <div className="panel-update__actions">
+                  <button
+                    type="button"
+                    className="panel-update__button"
+                    disabled={update?.status === "installing"}
+                    onClick={() => void runUpdateAction()}
+                  >
+                    {activeUpdate.self_updatable
+                      ? t("panel.installRestart")
+                      : t("panel.openReleasePage")}
+                  </button>
+                  <button
+                    type="button"
+                    className="panel-update__dismiss"
+                    aria-label={t("panel.dismissUpdate")}
+                    onClick={() => void dismiss()}
+                  >
+                    x
+                  </button>
+                </div>
+              </section>
+            )}
             {renderBody()}
           </div>
         </div>

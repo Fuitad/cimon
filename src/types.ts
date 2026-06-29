@@ -129,6 +129,37 @@ export interface AppInfo {
   commit: string | null;
 }
 
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "up_to_date"
+  | "error"
+  | "installing"
+  | "installed";
+
+export interface AvailableUpdate {
+  version: string;
+  body: string | null;
+  date: string | null;
+  release_url: string;
+  self_updatable: boolean;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}
+
+export interface UpdateState {
+  status: UpdateStatus;
+  available: AvailableUpdate | null;
+  last_checked_at: string | null;
+  error: string | null;
+  progress: UpdateProgress | null;
+  dismissed_version: string | null;
+}
+
 export type CommandErrorKind =
   | "unauthorized"
   | "invalid_base_url"

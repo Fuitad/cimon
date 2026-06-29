@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { withTauri, withoutTauri } from "./test/utils";
-import type { MonitoredProject, NotificationRules } from "./types";
+import type { MonitoredProject, NotificationRules, UpdateState } from "./types";
 
 // `invoke` is replaced so the production-path tests can assert the Tauri command name + args without
 // a real shell. The factory re-runs after each `vi.resetModules()`, yielding a fresh mock that the
@@ -51,6 +51,10 @@ describe("api.ts invoke contract (inside the Tauri shell)", () => {
     ["getTokenHealth", (a) => a.getTokenHealth(), "get_token_health"],
     ["getConfig", (a) => a.getConfig(), "get_config"],
     ["getMonitoredProjects", (a) => a.getMonitoredProjects(), "get_monitored_projects"],
+    ["getUpdateState", (a) => a.getUpdateState(), "get_update_state"],
+    ["checkForUpdates", (a) => a.checkForUpdates(), "check_for_updates"],
+    ["installUpdate", (a) => a.installUpdate(), "install_update"],
+    ["dismissUpdate", (a) => a.dismissUpdate(), "dismiss_update"],
   ];
 
   it.each(noArgCases)("%s -> invoke(%s)", async (_name, call, command) => {
@@ -66,6 +70,12 @@ describe("api.ts invoke contract (inside the Tauri shell)", () => {
       { url: "https://x/p" },
     ],
     ["setPanelHeight", (a) => a.setPanelHeight(120), "set_panel_height", { height: 120 }],
+    [
+      "openUpdateRelease",
+      (a) => a.openUpdateRelease(true),
+      "open_update_release",
+      { fromPanel: true },
+    ],
     ["removeAccount", (a) => a.removeAccount("acc-1"), "remove_account", { id: "acc-1" }],
     [
       "addAccount",
@@ -209,6 +219,26 @@ describe("api.ts dev preview fixtures (outside the Tauri shell)", () => {
     const api = await loadPreview("tokenhealth");
     const statuses = await api.getProjectStatuses();
     expect(statuses.some((p) => p.auth_failed)).toBe(true);
+  });
+
+  it("getUpdateState returns an available self-updatable update for ?preview=update", async () => {
+    const api = await loadPreview("update");
+    const state = await api.getUpdateState();
+    expect(state.status).toBe("available");
+    expect(state.available).toMatchObject({ version: "0.1.4", self_updatable: true });
+  });
+
+  it("getUpdateState returns a Linux release-page update for ?preview=update-linux", async () => {
+    const api = await loadPreview("update-linux");
+    const state = await api.getUpdateState();
+    expect(state.available).toMatchObject({ version: "0.1.4", self_updatable: false });
+  });
+
+  it("checkForUpdates returns a deterministic preview error state", async () => {
+    const api = await loadPreview("update-error");
+    const state: UpdateState = await api.checkForUpdates();
+    expect(state.status).toBe("error");
+    expect(state.error).toContain("offline");
   });
 
   it("listDiscoveredProjects rejects for the failing stress account (acc-2)", async () => {

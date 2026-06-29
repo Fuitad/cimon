@@ -103,6 +103,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Assert updater signing secrets on tag releases
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for signed updater artifacts"; exit 1; }
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for signed updater artifacts"; exit 1; }
+
       - name: Prepare App Store Connect API key (macOS notarization)
         if: matrix.platform == 'macos-latest'
         env:
@@ -131,6 +141,9 @@ jobs:
           # $GITHUB_ENV by the "Prepare App Store Connect API key" step above.
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          # Tauri updater signing. Required on tag releases by the preflight above.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # On a tag push: create/attach to a draft GitHub Release for that tag.
           # On manual runs: tagName is empty, so tauri-action only builds (no release).
@@ -139,7 +152,12 @@ jobs:
           releaseBody: See the assets below to download and install this version.
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          # Updater artifacts are signed, which requires TAURI_SIGNING_PRIVATE_KEY. Enable them only
+          # on tag releases (the preflight above guarantees the key is present then); a manual
+          # workflow_dispatch dry run leaves createUpdaterArtifacts at its tauri.conf.json default of
+          # false so it still builds installers without any signing secret. The inline JSON is
+          # single-quoted so tauri-action passes it to `tauri build --config` as one token.
+          args: ${{ matrix.args }}${{ startsWith(github.ref, 'refs/tags/') && ' --config ''{"bundle":{"createUpdaterArtifacts":true}}''' || '' }}
 
       # Enforce the Windows install decision at build time, failing the leg (and so blocking
       # publication of the draft release, which is reviewed manually per RELEASING.md) if either
@@ -161,6 +179,41 @@ jobs:
           echo "installMode=$mode  NSIS setup.exe=$exe_count  MSI=$msi_count"
           [ "$msi_count" -eq 0 ] || { echo "::error::Windows build produced $msi_count .msi file(s); expected NSIS only"; exit 1; }
           [ "$exe_count" -ge 1 ] || { echo "::error::No NSIS -setup.exe under src-tauri/target/**/release/bundle"; exit 1; }
+
+      - name: Collect updater manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p updater-fragments
+          latest=$(find src-tauri/target -path '*/release/bundle/*' -name latest.json 2>/dev/null | head -1 || true)
+          [ -n "$latest" ] || { echo "::error::No per-leg latest.json found under src-tauri/target/**/release/bundle"; exit 1; }
+          case "${{ matrix.platform }}:${{ matrix.target || 'x64' }}" in
+            macos-latest:universal-apple-darwin) fragment_target="universal-apple-darwin" ;;
+            windows-latest:x64) fragment_target="windows-x86_64" ;;
+            ubuntu-22.04:x64) fragment_target="linux-x86_64" ;;
+            *) echo "::error::Unknown updater fragment target for ${{ matrix.platform }} / ${{ matrix.target || 'x64' }}"; exit 1 ;;
+          esac
+          jq --arg target "$fragment_target" '
+            . as $manifest
+            | ($manifest.platforms | to_entries[0].value) as $platform
+            | {
+                version: $manifest.version,
+                notes: ($manifest.notes // ""),
+                pub_date: $manifest.pub_date,
+                target: $target,
+                signature: $platform.signature,
+                url: $platform.url
+              }
+          ' "$latest" > "updater-fragments/${fragment_target}.json"
+
+      - name: Upload updater manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: updater-fragments-${{ matrix.platform }}-${{ matrix.target || 'x64' }}
+          path: updater-fragments/*.json
+          if-no-files-found: error
 
       # tauri-action notarizes and staples the .app, but the .dmg wrapper it builds is only signed,
       # not notarized, so a downloaded .dmg would trip Gatekeeper once. Notarize + staple the .dmg
@@ -204,3 +257,37 @@ jobs:
           path: |
             src-tauri/target/**/release/bundle/**/*
           if-no-files-found: error
+
+  finalize-updater-manifest:
+    name: Finalize updater manifest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download updater fragments
+        uses: actions/download-artifact@v8
+        with:
+          pattern: updater-fragments-*
+          path: updater-fragments
+          merge-multiple: true
+
+      - name: Assemble and validate latest.json
+        run: |
+          set -euo pipefail
+          fragments=$(find updater-fragments -name '*.json' -print | sort)
+          [ -n "$fragments" ] || { echo "::error::No updater fragments downloaded"; exit 1; }
+          node scripts/assemble-tauri-updater-manifest.mjs latest.json $fragments
+          node scripts/validate-release-workflow.mjs .github/workflows/release.yml
+          jq -e '.platforms["darwin-aarch64"] and .platforms["darwin-x86_64"] and .platforms["windows-x86_64"]' latest.json >/dev/null
+
+      - name: Replace partial latest.json on draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete-asset "$GITHUB_REF_NAME" latest.json -y || true
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber

@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { screen, waitFor } from "@testing-library/react";
 
-import { getConfig, getMonitoredProjects, getTokenHealth, listAccounts } from "./api";
+import {
+  appInfo,
+  checkForUpdates,
+  getConfig,
+  getMonitoredProjects,
+  getTokenHealth,
+  getUpdateState,
+  installUpdate,
+  listAccounts,
+  openUpdateRelease,
+} from "./api";
 import { applyUiMode } from "./theme";
 import type { Config } from "./types";
 import { renderWithI18n } from "./test/utils";
@@ -11,10 +21,15 @@ import App from "./App";
 // App imports `./api` and `./theme`; the child sections import the same modules as `../api` / `../theme`,
 // which resolve to the same files, so mocking here covers the whole tree.
 vi.mock("./api", () => ({
+  appInfo: vi.fn(),
+  checkForUpdates: vi.fn(),
   listAccounts: vi.fn(),
   getConfig: vi.fn(),
+  getUpdateState: vi.fn(),
   getTokenHealth: vi.fn(),
   getMonitoredProjects: vi.fn(),
+  installUpdate: vi.fn(),
+  openUpdateRelease: vi.fn(),
   listDiscoveredProjects: vi.fn(),
   setMonitoredProjects: vi.fn(),
   setNotificationRules: vi.fn(),
@@ -47,10 +62,36 @@ const config: Config = {
 };
 
 beforeEach(() => {
+  vi.mocked(appInfo).mockResolvedValue({ version: "0.1.3", commit: null });
+  vi.mocked(checkForUpdates).mockResolvedValue({
+    status: "up_to_date",
+    available: null,
+    last_checked_at: "1",
+    error: null,
+    progress: null,
+    dismissed_version: null,
+  });
   vi.mocked(listAccounts).mockResolvedValue([]);
   vi.mocked(getConfig).mockResolvedValue(config);
+  vi.mocked(getUpdateState).mockResolvedValue({
+    status: "idle",
+    available: null,
+    last_checked_at: null,
+    error: null,
+    progress: null,
+    dismissed_version: null,
+  });
   vi.mocked(getTokenHealth).mockResolvedValue([]);
   vi.mocked(getMonitoredProjects).mockResolvedValue([]);
+  vi.mocked(installUpdate).mockResolvedValue({
+    status: "installed",
+    available: null,
+    last_checked_at: "1",
+    error: null,
+    progress: null,
+    dismissed_version: null,
+  });
+  vi.mocked(openUpdateRelease).mockResolvedValue(undefined);
 });
 
 afterEach(() => {

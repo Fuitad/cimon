@@ -145,6 +145,21 @@ pub fn notify_token_event(app: &tauri::AppHandle, event: &TokenEvent, locale: &s
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
+/// Build the localized `(title, body)` for an available app update notification.
+pub fn format_update_available(version: &str, locale: &str) -> (String, String) {
+    (
+        rust_i18n::t!("notify.update_title", locale = locale).to_string(),
+        rust_i18n::t!("notify.update_body", locale = locale, version = version).to_string(),
+    )
+}
+
+/// Fire a native notification when a newer CIMon release is available.
+pub fn notify_update_available(app: &tauri::AppHandle, version: &str, locale: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let (title, body) = format_update_available(version, locale);
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
 /// Bind native notifications to CIMon's identity. On macOS the legacy notification center
 /// attributes notifications to the first bundle id set in the process (defaulting to Finder if
 /// none is set), and that setting is process-global and write-once, so it is pinned here at
@@ -409,5 +424,16 @@ mod tests {
             body_fr.contains("24"),
             "fr body names the bracket: {body_fr}"
         );
+    }
+
+    #[test]
+    fn format_update_available_localizes_en_and_fr() {
+        let (title_en, body_en) = format_update_available("0.1.4", "en");
+        assert_eq!(title_en, "CIMon update available");
+        assert!(body_en.contains("0.1.4"));
+
+        let (title_fr, body_fr) = format_update_available("0.1.4", "fr");
+        assert_eq!(title_fr, "Mise à jour CIMon disponible");
+        assert!(body_fr.contains("0.1.4"));
     }
 }

@@ -10,6 +10,7 @@ mod poller;
 mod provider;
 mod secrets;
 mod tray;
+mod updates;
 mod window;
 
 use tauri::Manager;
@@ -50,6 +51,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -196,6 +198,20 @@ pub fn run() {
             // forwards transitions to notifications + the aggregate status to the tray. Skipped in
             // fixtures mode (the else branch seeds the tray + popover from fake data instead).
             if !fixtures_active {
+                // Restore a dismissal made in a previous run before the first check, so a dismissed
+                // update stays hidden and does not re-notify across restarts.
+                {
+                    let state = app.state::<commands::AppState>();
+                    let dismissed = state
+                        .config
+                        .lock()
+                        .unwrap()
+                        .dismissed_update_version
+                        .clone();
+                    state.updates.seed_dismissed_version(dismissed);
+                }
+                updates::spawn_update_checks(app.handle().clone());
+
                 let config = app.state::<commands::AppState>().config.clone();
                 let http = provider::build_http_client();
                 // Share the command layer's token store (an in-memory cache over the keychain) so the
@@ -300,6 +316,11 @@ pub fn run() {
             commands::quit_app,
             commands::hide_panel,
             commands::set_panel_height,
+            commands::get_update_state,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::dismiss_update,
+            commands::open_update_release,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

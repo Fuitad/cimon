@@ -5,21 +5,29 @@ import { listen } from "@tauri-apps/api/event";
 
 import {
   appInfo,
+  dismissUpdate,
   getConfig,
   getProjectStatuses,
+  getUpdateState,
+  installUpdate,
+  openUpdateRelease,
   openProjectUrl,
   quitApp,
   showSettingsWindow,
 } from "./api";
-import type { Config, PanelProject } from "./types";
+import type { Config, PanelProject, UpdateState } from "./types";
 import { renderWithI18n, user } from "./test/utils";
 import Panel from "./Panel";
 
 vi.mock("./api", () => ({
   appInfo: vi.fn(),
+  dismissUpdate: vi.fn(),
   getConfig: vi.fn(),
   getProjectStatuses: vi.fn(),
+  getUpdateState: vi.fn(),
+  installUpdate: vi.fn(),
   hidePanel: vi.fn(),
+  openUpdateRelease: vi.fn(),
   openProjectUrl: vi.fn(),
   quitApp: vi.fn(),
   setPanelHeight: vi.fn(),
@@ -67,10 +75,36 @@ const config = (accountCount: number): Config => ({
   ui_mode: "system",
 });
 
+const updateState = (over: Partial<UpdateState> = {}): UpdateState => ({
+  status: "idle",
+  available: null,
+  last_checked_at: null,
+  error: null,
+  progress: null,
+  dismissed_version: null,
+  ...over,
+});
+
+const availableUpdate = (selfUpdatable = true): UpdateState =>
+  updateState({
+    status: "available",
+    available: {
+      version: "0.1.4",
+      body: "Fixes",
+      date: "2026-06-29T12:00:00Z",
+      release_url: "https://github.com/Fuitad/cimon/releases/latest",
+      self_updatable: selfUpdatable,
+    },
+  });
+
 beforeEach(() => {
   vi.mocked(getProjectStatuses).mockResolvedValue([]);
   vi.mocked(getConfig).mockResolvedValue(config(1));
+  vi.mocked(getUpdateState).mockResolvedValue(updateState());
   vi.mocked(appInfo).mockResolvedValue({ version: "0.1.0", commit: "abc1234" });
+  vi.mocked(installUpdate).mockResolvedValue(updateState({ status: "installed" }));
+  vi.mocked(dismissUpdate).mockResolvedValue(updateState());
+  vi.mocked(openUpdateRelease).mockResolvedValue(undefined);
   vi.mocked(listen).mockResolvedValue(() => {});
 });
 
@@ -178,5 +212,40 @@ describe("Panel", () => {
     });
 
     expect(await screen.findByText("panel.summaryFailing")).toBeInTheDocument();
+  });
+
+  it("renders an available update banner and installs from the primary action", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([row({})]);
+    vi.mocked(getUpdateState).mockResolvedValue(availableUpdate(true));
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.updateAvailable")).toBeInTheDocument();
+    await user().click(screen.getByRole("button", { name: "panel.installRestart" }));
+
+    expect(installUpdate).toHaveBeenCalled();
+  });
+
+  it("renders Linux update fallback without install progress", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([row({})]);
+    vi.mocked(getUpdateState).mockResolvedValue(availableUpdate(false));
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.updateAvailable")).toBeInTheDocument();
+    await user().click(screen.getByRole("button", { name: "panel.openReleasePage" }));
+
+    expect(openUpdateRelease).toHaveBeenCalled();
+    expect(installUpdate).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error in the banner when an install fails", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([row({})]);
+    vi.mocked(getUpdateState).mockResolvedValue(availableUpdate(true));
+    vi.mocked(installUpdate).mockRejectedValueOnce(new Error("download failed"));
+    renderWithI18n(<Panel />);
+
+    await user().click(await screen.findByRole("button", { name: "panel.installRestart" }));
+
+    expect(await screen.findByText("panel.updateFailed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "panel.installRestart" })).not.toBeDisabled();
   });
 });

@@ -56,6 +56,12 @@ _version: 2
 "notify.keychain_unavailable_body":
   en: "CIMon couldn't reach a system secret service (GNOME Keyring or KWallet) to read or save access tokens. Monitoring is paused until one is available."
   fr: "CIMon n'a pas pu joindre un service de secrets du système (GNOME Keyring ou KWallet) pour lire ou enregistrer les jetons d'accès. La surveillance est en pause jusqu'à ce qu'un service soit disponible."
+"notify.update_title":
+  en: "CIMon update available"
+  fr: "Mise à jour CIMon disponible"
+"notify.update_body":
+  en: "Version %{version} is ready. Open CIMon to install it."
+  fr: "La version %{version} est prête. Ouvrez CIMon pour l'installer."
 
 "tray.open_settings":
   en: "Open Settings"

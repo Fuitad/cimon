@@ -610,9 +610,16 @@
   align-items: center;
   gap: var(--space-2);
 }
+.ctl__field--wrap {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
 .ctl__unit {
   font-size: 0.8125rem;
   color: var(--ink-muted);
+}
+.ctl--updates {
+  cursor: default;
 }
 
 /* Switch: a native checkbox styled as a track + thumb (keeps real checkbox semantics) */

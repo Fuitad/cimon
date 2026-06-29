@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  appInfo,
   getConfig,
   setLaunchAtLogin,
   setLocale,
@@ -11,8 +12,9 @@ import {
 } from "../api";
 import { SUPPORTED_LNGS } from "../i18n";
 import { applyUiMode } from "../theme";
+import { useUpdateState } from "../useUpdateState";
 import { DEFAULT_NOTIFICATION_RULES } from "../types";
-import type { NotificationRules, UiMode } from "../types";
+import type { AppInfo, NotificationRules, UiMode } from "../types";
 
 /** Notification rules, poll interval, launch-at-login, and language selection. */
 function SettingsSection() {
@@ -21,6 +23,8 @@ function SettingsSection() {
   const [intervalSecs, setIntervalSecs] = useState(30);
   const [uiMode, setUiModeState] = useState<UiMode>("system");
   const [launch, setLaunch] = useState(false);
+  const [appBuild, setAppBuild] = useState<AppInfo | null>(null);
+  const { update, checkForUpdates: onCheckUpdates, runUpdateAction } = useUpdateState("settings");
   // Launch-at-login touches OS login items, so unlike the pure-config writes it can genuinely
   // fail (permissions, sandbox). Revert the optimistic toggle and surface it when it does.
   const [launchError, setLaunchError] = useState(false);
@@ -36,6 +40,9 @@ function SettingsSection() {
       .catch(() => {
         /* running outside the Tauri shell */
       });
+    appInfo()
+      .then(setAppBuild)
+      .catch(() => setAppBuild(null));
   }, []);
 
   const updateRules = (patch: Partial<NotificationRules>) => {
@@ -62,6 +69,22 @@ function SettingsSection() {
       setLaunch(!v); // revert the optimistic change to match the unchanged OS state
       setLaunchError(true);
     });
+  };
+
+  const updateStatusText = (): string => {
+    if (!update) return String(t("settings.updateIdle"));
+    if (update.status === "checking") return String(t("settings.updateChecking"));
+    if (update.status === "up_to_date") return String(t("settings.updateUpToDate"));
+    if (update.status === "error")
+      return String(
+        t("settings.updateError", {
+          message: update.error ?? String(t("settings.updateUnknownError")),
+        }),
+      );
+    if (update.status === "installing") return String(t("settings.updateInstalling"));
+    if (update.status === "installed") return String(t("settings.updateInstalled"));
+    if (update.available) return String(t("settings.updateAvailable"));
+    return String(t("settings.updateIdle"));
   };
 
   const toggle = (label: string, checked: boolean, onChange: (v: boolean) => void) => (
@@ -146,6 +169,43 @@ function SettingsSection() {
           </label>
 
           {toggle(t("settings.launchAtLogin"), launch, onLaunch)}
+
+          <div className="ctl ctl--updates">
+            <span className="ctl__text">
+              <span className="ctl__label">{t("settings.updates")}</span>
+              <span className="ctl__hint">
+                {t("settings.currentVersion", { version: appBuild?.version ?? "dev" })}
+              </span>
+              <span className="ctl__hint">{updateStatusText()}</span>
+              {update?.available && (
+                <span className="ctl__hint">
+                  {t("settings.updateVersion", { version: update.available.version })}
+                </span>
+              )}
+            </span>
+            <span className="ctl__field ctl__field--wrap">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                disabled={update?.status === "checking" || update?.status === "installing"}
+                onClick={() => void onCheckUpdates()}
+              >
+                {t("settings.checkForUpdates")}
+              </button>
+              {update?.available && (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={update.status === "installing"}
+                  onClick={() => void runUpdateAction()}
+                >
+                  {update.available.self_updatable
+                    ? t("settings.installRestart")
+                    : t("settings.openReleasePage")}
+                </button>
+              )}
+            </span>
+          </div>
 
           <label className="ctl">
             <span className="ctl__label">{t("settings.appearance")}</span>
