@@ -11,20 +11,13 @@ import {
 } from "../api";
 import { SUPPORTED_LNGS } from "../i18n";
 import { applyUiMode } from "../theme";
+import { DEFAULT_NOTIFICATION_RULES } from "../types";
 import type { NotificationRules, UiMode } from "../types";
-
-const DEFAULT_RULES: NotificationRules = {
-  on_start: false,
-  on_success: true,
-  on_fail: true,
-  pipeline_level: true,
-  job_level: false,
-};
 
 /** Notification rules, poll interval, launch-at-login, and language selection. */
 function SettingsSection() {
   const { t, i18n } = useTranslation();
-  const [rules, setRules] = useState<NotificationRules>(DEFAULT_RULES);
+  const [rules, setRules] = useState<NotificationRules>(DEFAULT_NOTIFICATION_RULES);
   const [intervalSecs, setIntervalSecs] = useState(30);
   const [uiMode, setUiModeState] = useState<UiMode>("system");
   const [launch, setLaunch] = useState(false);
@@ -91,20 +84,29 @@ function SettingsSection() {
           <p className="group__desc">{t("settings.notificationsDesc")}</p>
         </div>
 
-        <div className="ctl-list">
-          {toggle(t("settings.onStart"), rules.on_start, (v) => updateRules({ on_start: v }))}
-          {toggle(t("settings.onSuccess"), rules.on_success, (v) => updateRules({ on_success: v }))}
-          {toggle(t("settings.onFail"), rules.on_fail, (v) => updateRules({ on_fail: v }))}
+        <div className="subgroup">
+          <h3 className="subgroup__title">{t("settings.pipelineEvents")}</h3>
+          <div className="ctl-list">
+            {toggle(t("settings.onStart"), rules.on_start, (v) => updateRules({ on_start: v }))}
+            {toggle(t("settings.onSuccess"), rules.on_success, (v) =>
+              updateRules({ on_success: v }),
+            )}
+            {toggle(t("settings.onFail"), rules.on_fail, (v) => updateRules({ on_fail: v }))}
+          </div>
         </div>
 
         <div className="subgroup">
-          <h3 className="subgroup__title">{t("settings.detail")}</h3>
-          <p className="subgroup__desc">{t("settings.detailDesc")}</p>
+          <h3 className="subgroup__title">{t("settings.jobEvents")}</h3>
           <div className="ctl-list">
-            {toggle(t("settings.pipelineLevel"), rules.pipeline_level, (v) =>
-              updateRules({ pipeline_level: v }),
+            {toggle(t("settings.jobOnStart"), rules.job_on_start, (v) =>
+              updateRules({ job_on_start: v }),
             )}
-            {toggle(t("settings.jobLevel"), rules.job_level, (v) => updateRules({ job_level: v }))}
+            {toggle(t("settings.jobOnSuccess"), rules.job_on_success, (v) =>
+              updateRules({ job_on_success: v }),
+            )}
+            {toggle(t("settings.jobOnFail"), rules.job_on_fail, (v) =>
+              updateRules({ job_on_fail: v }),
+            )}
           </div>
         </div>
       </section>

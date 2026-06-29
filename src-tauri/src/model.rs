@@ -181,34 +181,45 @@ pub struct MonitoredProject {
 
 /// Global notification preferences (v1: one set applies to all monitored projects).
 ///
-/// Detail level is two INDEPENDENT toggles, not a mutually-exclusive choice: the PRD specifies
-/// "either/both detail levels". A transition notifies only when its event type AND its detail
-/// level are both enabled. `#[serde(default)]` lets a config written before job-level (which
-/// had a single `detail_level` field) still load: the unknown field is ignored and the missing
-/// bools fall back to the defaults below.
+/// Pipeline and job events are configured independently: the `on_*` booleans gate pipeline
+/// transitions and the `job_on_*` booleans gate individual-job transitions. A transition notifies
+/// when its matching toggle is on (see `notify::should_notify`). `#[serde(default)]` lets configs
+/// written before this change still load: the older `pipeline_level` / `job_level` / `detail_level`
+/// fields are unknown now and ignored, and the missing `job_on_*` bools fall back to off below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationRules {
     pub on_start: bool,
     pub on_success: bool,
     pub on_fail: bool,
-    /// Notify on pipeline-level transitions.
-    pub pipeline_level: bool,
-    /// Notify on job-level transitions (individual jobs within a pipeline).
-    pub job_level: bool,
+    /// Notify when an individual job starts.
+    pub job_on_start: bool,
+    /// Notify when an individual job succeeds.
+    pub job_on_success: bool,
+    /// Notify when an individual job fails.
+    pub job_on_fail: bool,
 }
 
 impl Default for NotificationRules {
     fn default() -> Self {
-        // Quiet-ish default: notify on completion (success/fail), not on every start, and at
-        // pipeline level only (job-level is opt-in to avoid flooding the user with per-job noise).
+        // Quiet-ish default: notify on pipeline completion (success/fail), not on every start;
+        // job events are all opt-in to avoid flooding the user with per-job noise.
         NotificationRules {
             on_start: false,
             on_success: true,
             on_fail: true,
-            pipeline_level: true,
-            job_level: false,
+            job_on_start: false,
+            job_on_success: false,
+            job_on_fail: false,
         }
+    }
+}
+
+impl NotificationRules {
+    /// Whether any job event is enabled. Gates whether the poller fetches per-job status at all:
+    /// with no job event on, there is no reason to pay for the extra per-pipeline jobs request.
+    pub fn any_job_enabled(&self) -> bool {
+        self.job_on_start || self.job_on_success || self.job_on_fail
     }
 }
 
@@ -452,8 +463,9 @@ mod tests {
             on_start: true,
             on_success: false,
             on_fail: true,
-            pipeline_level: false,
-            job_level: true,
+            job_on_start: true,
+            job_on_success: false,
+            job_on_fail: true,
         };
         let json = serde_json::to_string(&rules).unwrap();
         assert_eq!(
@@ -461,18 +473,24 @@ mod tests {
             rules
         );
 
-        // A config written before job-level carried a single `detail_level` field and no
-        // level bools. It must still load: the unknown field is ignored and the missing bools
-        // fall back to the defaults (pipeline on, job off).
+        // A config written before this change carried the old detail-level model (`pipeline_level`
+        // / `job_level`, or an even older single `detail_level` string). It must still load: the
+        // now-unknown fields are ignored and the missing `job_on_*` bools fall back to off. The
+        // pipeline `on_*` events are preserved as written; legacy `job_level: true` deliberately
+        // does NOT carry over to the new per-event job toggles (simple-migration behavior).
         let old: NotificationRules = serde_json::from_str(
-            r#"{"on_start":false,"on_success":true,"on_fail":true,"detail_level":"pipeline"}"#,
+            r#"{"on_start":false,"on_success":true,"on_fail":true,"pipeline_level":false,"job_level":true,"detail_level":"both"}"#,
         )
         .unwrap();
         assert!(
-            old.pipeline_level,
-            "pipeline-level defaults on for an old config"
+            old.on_success,
+            "pipeline success event preserved from old config"
         );
-        assert!(!old.job_level, "job-level defaults off for an old config");
+        assert!(old.on_fail, "pipeline fail event preserved from old config");
+        assert!(
+            !old.any_job_enabled(),
+            "legacy job_level does not enable the new per-event job toggles"
+        );
     }
 
     #[test]

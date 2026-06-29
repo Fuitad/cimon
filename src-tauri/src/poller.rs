@@ -576,7 +576,7 @@ pub async fn poll_once(
             // head, since GitLab orders by updated_at), so cost is at most one extra request per
             // project per tick and the jobs track the same pipeline the aggregate reflects. A
             // job-fetch error is isolated (skip job detection this tick) like a pipeline-fetch error.
-            if cfg.rules.job_level {
+            if cfg.rules.any_job_enabled() {
                 if let Some(newest) = newest_pipeline(&pipelines) {
                     if let Ok(jobs) = provider
                         .list_jobs(mp.project_id, mp.remote_ref.as_deref(), newest.id)
@@ -1062,8 +1062,9 @@ mod tests {
                 on_start: true,
                 on_success: true,
                 on_fail: true,
-                pipeline_level: true,
-                job_level,
+                job_on_start: job_level,
+                job_on_success: job_level,
+                job_on_fail: job_level,
             },
             ..Config::default()
         }
