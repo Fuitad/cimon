@@ -108,8 +108,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        # windows-latest defaults run: steps to PowerShell, which cannot parse this bash. The other
-        # bash steps that run on Windows (NSIS assert, fragment collect) already pin the bash shell.
+        # windows-latest defaults run: steps to PowerShell, which cannot parse this bash; the
+        # NSIS-only assert step below pins the bash shell for the same reason.
         shell: bash
         run: |
           set -euo pipefail
@@ -155,6 +155,12 @@ jobs:
           releaseBody: See the assets below to download and install this version.
           releaseDraft: true
           prerelease: false
+          # Each matrix leg would otherwise generate and upload its own single-platform latest.json
+          # to the same draft release, racing the other legs (the "Not Found" asset-update error).
+          # Disable it and let the finalize-updater-manifest job assemble the complete latest.json
+          # from the uploaded .sig assets. The .sig files still upload (uploadUpdaterSignatures
+          # defaults to true), and so do the updater artifacts they sign.
+          includeUpdaterJson: false
           # Updater artifacts are signed, which requires TAURI_SIGNING_PRIVATE_KEY. Enable them only
           # on tag releases (the preflight above guarantees the key is present then); a manual
           # workflow_dispatch dry run leaves createUpdaterArtifacts at its tauri.conf.json default of
@@ -182,41 +188,6 @@ jobs:
           echo "installMode=$mode  NSIS setup.exe=$exe_count  MSI=$msi_count"
           [ "$msi_count" -eq 0 ] || { echo "::error::Windows build produced $msi_count .msi file(s); expected NSIS only"; exit 1; }
           [ "$exe_count" -ge 1 ] || { echo "::error::No NSIS -setup.exe under src-tauri/target/**/release/bundle"; exit 1; }
-
-      - name: Collect updater manifest fragment
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p updater-fragments
-          latest=$(find src-tauri/target -path '*/release/bundle/*' -name latest.json 2>/dev/null | head -1 || true)
-          [ -n "$latest" ] || { echo "::error::No per-leg latest.json found under src-tauri/target/**/release/bundle"; exit 1; }
-          case "${{ matrix.platform }}:${{ matrix.target || 'x64' }}" in
-            macos-latest:universal-apple-darwin) fragment_target="universal-apple-darwin" ;;
-            windows-latest:x64) fragment_target="windows-x86_64" ;;
-            ubuntu-22.04:x64) fragment_target="linux-x86_64" ;;
-            *) echo "::error::Unknown updater fragment target for ${{ matrix.platform }} / ${{ matrix.target || 'x64' }}"; exit 1 ;;
-          esac
-          jq --arg target "$fragment_target" '
-            . as $manifest
-            | ($manifest.platforms | to_entries[0].value) as $platform
-            | {
-                version: $manifest.version,
-                notes: ($manifest.notes // ""),
-                pub_date: $manifest.pub_date,
-                target: $target,
-                signature: $platform.signature,
-                url: $platform.url
-              }
-          ' "$latest" > "updater-fragments/${fragment_target}.json"
-
-      - name: Upload updater manifest fragment
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v7
-        with:
-          name: updater-fragments-${{ matrix.platform }}-${{ matrix.target || 'x64' }}
-          path: updater-fragments/*.json
-          if-no-files-found: error
 
       # tauri-action notarizes and staples the .app, but the .dmg wrapper it builds is only signed,
       # not notarized, so a downloaded .dmg would trip Gatekeeper once. Notarize + staple the .dmg
@@ -271,23 +242,45 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download updater fragments
-        uses: actions/download-artifact@v8
-        with:
-          pattern: updater-fragments-*
-          path: updater-fragments
-          merge-multiple: true
-
-      - name: Assemble and validate latest.json
+      - name: Assemble latest.json from release signatures
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          fragments=$(find updater-fragments -name '*.json' -print | sort)
-          [ -n "$fragments" ] || { echo "::error::No updater fragments downloaded"; exit 1; }
-          node scripts/assemble-tauri-updater-manifest.mjs latest.json $fragments
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          download_base="${{ github.server_url }}/${{ github.repository }}/releases/download/${tag}"
+          sigs=$(mktemp -d)
+          frags=$(mktemp -d)
+
+          # tauri-action uploaded one .sig per updater artifact to the draft release. The updater
+          # keys are the macOS app bundle (*.app.tar.gz) and the Windows NSIS installer
+          # (*-setup.exe); the .dmg and the Linux AppImage are not self-update targets. Reading the
+          # real uploaded asset names here handles tauri-action's macOS rename
+          # (CIMon.app.tar.gz -> CIMon_universal.app.tar.gz) without hardcoding it.
+          gh release download "$tag" --dir "$sigs" --pattern '*.sig'
+
+          build_fragment() {
+            local target="$1" sig_glob="$2" out="$3" sig asset
+            sig=$(find "$sigs" -name "$sig_glob" | head -1 || true)
+            [ -n "$sig" ] || { echo "::error::No $sig_glob asset on release $tag"; exit 1; }
+            asset=$(basename "${sig%.sig}")
+            jq -n \
+              --arg version "$version" \
+              --arg target "$target" \
+              --arg signature "$(cat "$sig")" \
+              --arg url "$download_base/$asset" \
+              '{version: $version, target: $target, signature: $signature, url: $url}' > "$out"
+          }
+
+          build_fragment "universal-apple-darwin" '*.app.tar.gz.sig' "$frags/macos.json"
+          build_fragment "windows-x86_64" '*-setup.exe.sig' "$frags/windows.json"
+
+          node scripts/assemble-tauri-updater-manifest.mjs latest.json "$frags/macos.json" "$frags/windows.json"
           node scripts/validate-release-workflow.mjs .github/workflows/release.yml
           jq -e '.platforms["darwin-aarch64"] and .platforms["darwin-x86_64"] and .platforms["windows-x86_64"]' latest.json >/dev/null
 
-      - name: Replace partial latest.json on draft release
+      - name: Upload latest.json to the draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

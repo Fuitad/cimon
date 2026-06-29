@@ -39,33 +39,29 @@ describe("validateReleaseWorkflow", () => {
     ).toThrow(/Assert updater signing secrets on tag releases/);
   });
 
-  it("rejects a workflow that omits updater fragments from the matrix", () => {
-    expect(
-      validateMutatedWorkflow((yaml) =>
-        yaml.replace('fragment_target="windows-x86_64"', 'fragment_target="windows"'),
-      ),
-    ).toThrow(/Collect updater manifest fragment/);
-  });
-
   it("rejects enabling updater artifacts without the tag gate (would break keyless dry runs)", () => {
     expect(
       validateMutatedWorkflow((yaml) =>
-        // Drop the tag gate so createUpdaterArtifacts:true would apply to every build, including
-        // keyless workflow_dispatch dry runs.
         yaml.replace("startsWith(github.ref, 'refs/tags/') && ' --config", "true && ' --config"),
       ),
     ).toThrow(/Build app and bundle installers/);
   });
 
-  it("rejects node20 download-artifact pins", () => {
+  it("rejects re-enabling tauri-action's own latest.json upload (matrix legs would race)", () => {
     expect(
       validateMutatedWorkflow((yaml) =>
-        yaml.replace("actions/download-artifact@v8", "actions/download-artifact@v4"),
+        yaml.replace("includeUpdaterJson: false", "includeUpdaterJson: true"),
       ),
-    ).toThrow(/Download updater fragments/);
+    ).toThrow(/Build app and bundle installers/);
   });
 
-  it("rejects uploading latest.json before deleting a partial asset", () => {
+  it("rejects a finalize step that does not read the uploaded .sig assets", () => {
+    expect(
+      validateMutatedWorkflow((yaml) => yaml.replace("--pattern '*.sig'", "--pattern '*.json'")),
+    ).toThrow(/Assemble latest.json from release signatures/);
+  });
+
+  it("rejects uploading latest.json before deleting the existing asset", () => {
     expect(
       validateMutatedWorkflow((yaml) =>
         yaml.replace(
@@ -73,6 +69,6 @@ describe("validateReleaseWorkflow", () => {
           'gh release upload "$GITHUB_REF_NAME" latest.json --clobber\n          gh release delete-asset "$GITHUB_REF_NAME" latest.json -y || true',
         ),
       ),
-    ).toThrow(/delete partial latest.json before final upload/);
+    ).toThrow(/delete the existing latest.json before re-uploading/);
   });
 });

@@ -42,10 +42,11 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.config/cimon/updater-signing/privat
 gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.config/cimon/updater-signing/private.key.password
 ```
 
-The release workflow fails tag builds if either updater signing secret is missing. The final release
-job assembles one complete `latest.json` from all platform fragments, deletes any per-platform
-partial `latest.json` that a matrix leg uploaded, and then uploads the complete manifest to the
-draft release.
+The release workflow fails tag builds if either updater signing secret is missing. Each matrix leg
+uploads its signed installer and the matching `.sig` signature, but not a `latest.json` (that upload
+is disabled so the parallel legs do not race to overwrite the same asset). The final release job then
+reads those `.sig` assets back from the draft release, assembles one complete `latest.json` from them,
+and uploads it to the draft release.
 
 ## One time macOS signing setup
 
