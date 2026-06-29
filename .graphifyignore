@@ -1,0 +1,26 @@
+# ==========================================
+# Graphify Optimization (Blocks LLM Token Burn)
+# ==========================================
+
+# Stop Graphify from indexing deep dependencies
+node_modules/
+vendor/
+.venv/
+venv/
+
+# Drop massive binary assets and media files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.pdf
+*.zip
+*.tar.gz
+
+# Drop generated build targets and test coverage
+dist/
+build/
+coverage/
+htmlcov/
