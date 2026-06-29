@@ -19,6 +19,11 @@ concurrency:
   group: security-audit-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege GITHUB_TOKEN: both audit jobs only check out the repo and scan its
+# lockfiles against advisory databases. Nothing writes back, so contents:read suffices.
+permissions:
+  contents: read
+
 jobs:
   cargo-audit:
     name: Rust crates (cargo-audit)
