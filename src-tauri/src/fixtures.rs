@@ -432,6 +432,7 @@ fn config_with(accounts: Vec<Account>, monitored: Vec<MonitoredProject>) -> Conf
         ui_mode: theme(),
         // Pretend the menu-bar notice was already shown so a fixtures run never fires it.
         menu_bar_notice_shown: true,
+        dismissed_update_version: None,
     }
 }
 

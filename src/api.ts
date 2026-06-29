@@ -12,6 +12,7 @@ import type {
   PanelProject,
   ProviderKind,
   UiMode,
+  UpdateState,
 } from "./types";
 import { DEFAULT_NOTIFICATION_RULES } from "./types";
 
@@ -365,6 +366,64 @@ const TOKENHEALTH_PANEL: PanelProject[] = [
   { ...PANEL_FIXTURE[2], account_id: "th-exp", account_label: "GitHub", provider: "github" },
 ];
 
+const UPDATE_AVAILABLE: UpdateState = {
+  status: "available",
+  available: {
+    version: "0.1.4",
+    body: "Reliability fixes and updater support.",
+    date: new Date().toISOString(),
+    release_url: "https://github.com/Fuitad/cimon/releases/latest",
+    self_updatable: true,
+  },
+  last_checked_at: String(Math.floor(Date.now() / 1000)),
+  error: null,
+  progress: null,
+  dismissed_version: null,
+};
+const UPDATE_CURRENT: UpdateState = {
+  status: "up_to_date",
+  available: null,
+  last_checked_at: String(Math.floor(Date.now() / 1000)),
+  error: null,
+  progress: null,
+  dismissed_version: null,
+};
+const UPDATE_ERROR: UpdateState = {
+  status: "error",
+  available: null,
+  last_checked_at: String(Math.floor(Date.now() / 1000)),
+  error: "offline",
+  progress: null,
+  dismissed_version: null,
+};
+
+const previewUpdateState = (): UpdateState => {
+  switch (previewParam()) {
+    case "update":
+      return UPDATE_AVAILABLE;
+    case "update-linux":
+      return {
+        ...UPDATE_AVAILABLE,
+        available: UPDATE_AVAILABLE.available
+          ? { ...UPDATE_AVAILABLE.available, self_updatable: false }
+          : null,
+      };
+    case "update-current":
+      return UPDATE_CURRENT;
+    case "update-error":
+      return UPDATE_ERROR;
+    default:
+      return {
+        status: "idle",
+        available: null,
+        last_checked_at: null,
+        error: null,
+        progress: null,
+        dismissed_version: null,
+      };
+  }
+};
+
 export const getProjectStatuses = (): Promise<PanelProject[]> => {
   if (!PREVIEW) return invoke("get_project_statuses");
   if (previewEmpty()) return Promise.resolve([]);
@@ -389,6 +448,32 @@ export const hidePanel = (): Promise<void> => (PREVIEW ? Promise.resolve() : inv
 
 export const setPanelHeight = (height: number): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("set_panel_height", { height });
+
+export const getUpdateState = (): Promise<UpdateState> =>
+  PREVIEW ? Promise.resolve(previewUpdateState()) : invoke("get_update_state");
+
+export const checkForUpdates = (): Promise<UpdateState> =>
+  PREVIEW ? Promise.resolve(previewUpdateState()) : invoke("check_for_updates");
+
+export const installUpdate = (): Promise<UpdateState> =>
+  PREVIEW
+    ? Promise.resolve({
+        ...previewUpdateState(),
+        status: "installing",
+        progress: { downloaded: 64, total: 100 },
+      })
+    : invoke("install_update");
+
+export const dismissUpdate = (): Promise<UpdateState> =>
+  PREVIEW
+    ? Promise.resolve({
+        ...previewUpdateState(),
+        dismissed_version: previewUpdateState().available?.version ?? null,
+      })
+    : invoke("dismiss_update");
+
+export const openUpdateRelease = (fromPanel: boolean): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("open_update_release", { fromPanel });
 
 export const addAccount = (
   provider: ProviderKind,

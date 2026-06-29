@@ -45,7 +45,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(kind: CommandErrorKind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: CommandErrorKind, message: impl Into<String>) -> Self {
         CommandError {
             kind,
             message: message.into(),
@@ -349,6 +349,9 @@ pub struct AppState {
     /// tree (served by `list_discovered_projects`) and the one-shot tray aggregate. `None` in normal
     /// operation, where the live poller drives everything.
     pub fixtures: Option<crate::fixtures::FixtureState>,
+    /// Runtime-only updater state shared by launch checks, manual checks, the panel banner, and
+    /// Settings.
+    pub updates: crate::updates::UpdateManager,
 }
 
 /// A dev-only file-backed token store, or `None` to fall back to the OS keychain.
@@ -396,6 +399,7 @@ impl AppState {
                     discovered: fx.discovered,
                     aggregate: fx.aggregate,
                 }),
+                updates: crate::updates::UpdateManager::new(),
             };
         }
 
@@ -416,6 +420,7 @@ impl AppState {
             project_status: Arc::new(Mutex::new(HashMap::new())),
             token_health: Arc::new(Mutex::new(HashMap::new())),
             fixtures: None,
+            updates: crate::updates::UpdateManager::new(),
         }
     }
 }
@@ -820,6 +825,70 @@ pub fn set_panel_height(app: tauri::AppHandle, height: f64) {
     crate::panel::set_height(&app, height);
 }
 
+#[tauri::command]
+pub fn get_update_state(state: tauri::State<'_, AppState>) -> crate::updates::UpdateState {
+    state.updates.state()
+}
+
+#[tauri::command]
+pub async fn check_for_updates(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::updates::UpdateState, CommandError> {
+    let updates = state.updates.clone();
+    Ok(updates.check(&app, true).await)
+}
+
+#[tauri::command]
+pub async fn install_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::updates::UpdateState, CommandError> {
+    let updates = state.updates.clone();
+    updates.install(&app).await
+}
+
+#[tauri::command]
+pub fn dismiss_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> crate::updates::UpdateState {
+    let snapshot = state.updates.dismiss(&app);
+    persist_dismissed_version(
+        &state.config,
+        &state.config_path,
+        snapshot.dismissed_version.clone(),
+    );
+    snapshot
+}
+
+/// Persist the dismissed update version to the config file so the dismissal survives a restart.
+/// Best-effort: the in-memory dismissal already holds for this session, so a save failure must not
+/// fail the dismiss action.
+fn persist_dismissed_version(cfg: &Mutex<Config>, cfg_path: &Path, version: Option<String>) {
+    let mut guard = cfg.lock().unwrap();
+    if guard.dismissed_update_version == version {
+        return;
+    }
+    guard.dismissed_update_version = version;
+    let _ = config::save(cfg_path, &guard);
+}
+
+#[tauri::command]
+pub fn open_update_release(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    from_panel: bool,
+) -> Result<(), CommandError> {
+    open_external_url(&app, &state.updates.release_url())?;
+    // Only the tray popover hides itself after opening a link; the Settings window stays put, so
+    // opening the release page from Settings must not dismiss an unrelated panel.
+    if from_panel {
+        crate::panel::hide(&app);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -833,6 +902,30 @@ mod tests {
             "cimon-cmd-{tag}-{}/config.json",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn persist_dismissed_version_round_trips_through_config() {
+        let path = temp_path("dismiss");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let cfg = Mutex::new(Config::default());
+
+        persist_dismissed_version(&cfg, &path, Some("0.1.4".to_string()));
+        assert_eq!(
+            config::load(&path).dismissed_update_version.as_deref(),
+            Some("0.1.4"),
+            "dismissed version should persist to disk"
+        );
+
+        persist_dismissed_version(&cfg, &path, None);
+        assert_eq!(
+            config::load(&path).dismissed_update_version,
+            None,
+            "clearing the dismissal should persist too"
+        );
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

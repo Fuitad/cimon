@@ -251,6 +251,9 @@ pub struct Config {
     /// Whether the one-time "CIMon is running in your menu bar" notice has been shown. Set the
     /// first time the app starts hidden (accounts configured) so the notice never nags again.
     pub menu_bar_notice_shown: bool,
+    /// The update version the user dismissed, persisted so dismissing an update banner survives a
+    /// restart. `None` means nothing is dismissed. Internal-only, not exposed to the frontend.
+    pub dismissed_update_version: Option<String>,
 }
 
 impl Default for Config {
@@ -264,6 +267,7 @@ impl Default for Config {
             locale: None,
             ui_mode: UiMode::System,
             menu_bar_notice_shown: false,
+            dismissed_update_version: None,
         }
     }
 }

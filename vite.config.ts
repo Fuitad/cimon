@@ -51,7 +51,7 @@ export default defineConfig(() => ({
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
     css: false,
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
     coverage: {
       provider: "v8" as const,
       reporter: ["text", "html"],

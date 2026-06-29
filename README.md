@@ -48,6 +48,7 @@ CIMon is fully standalone. It runs entirely on your machine and talks directly t
 * Background polling with native notifications when a monitored pipeline (a GitLab pipeline or a GitHub Actions workflow run), or an individual job within it, starts, succeeds, or fails. Pipeline events and job events each have their own independent started, succeeded, and failed toggles. Click a notification to open the relevant page in your browser (the specific job for a job notification, the pipeline otherwise).
 * Tray / menu bar icon showing the aggregate status across the projects you monitor, with quick links to open a pipeline in your browser.
 * Token health monitoring. If a token becomes invalid, revoked, or expired, the affected account is flagged distinctly in the popover and in Settings (not as a generic connection error), with a one-time notification, and you can replace the token in place from Settings without removing the account. CIMon also warns before a token expires (on launch, then at 72 hours and 24 hours remaining) and shows an "expires in N days" indicator next to each account.
+* In-app update checks. CIMon notifies you when a newer release is available, shows the update in the popover and Settings, installs and restarts in app on macOS and Windows, and opens the GitHub release page on Linux.
 * Light, dark, or system appearance, with the interface available in English and French.
 * Launch at login.
 
@@ -58,6 +59,8 @@ CIMon is read-only. It monitors and notifies. It does not trigger, re-run, or ca
 Pre-built installers for macOS, Windows, and Linux are published on the [Releases](https://github.com/Fuitad/cimon/releases) page. Download the file for your platform and install it the usual way.
 
 The macOS build is code-signed and notarized by Apple, so it opens normally with no Gatekeeper warning. The Windows build is not yet signed, so Windows shows a one-time warning. Here is what to expect on each platform.
+
+CIMon checks for new published releases automatically. On macOS and Windows, the update banner can install the new version and restart the app after you click `Install and restart`. On Linux, CIMon shows the same available version but opens the GitHub release page so you can install the package for your distribution.
 
 ### macOS
 
@@ -91,6 +94,7 @@ CIMon stores your access tokens through the Secret Service API, so a provider su
 * Node.js 20.19 or newer (Vite 8 requires 20.19+, or 22.12+) and npm
 * Rust (stable) and Cargo
 * Platform build tools for Tauri (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+* Optional native WebDriver E2E tooling on Linux and Windows: `cargo install tauri-driver --locked`
 
 ## Development
 
@@ -119,6 +123,18 @@ Run the Rust unit tests:
 ```sh
 cd src-tauri && cargo test
 ```
+
+Run native Tauri WebDriver checks on supported platforms:
+
+```sh
+cargo install tauri-driver --locked
+tauri-driver --port 4444 --native-port 4445
+```
+
+`tauri-driver` 2.x currently supports Linux through `WebKitWebDriver` and Windows through
+`msedgedriver.exe`. On macOS the binary installs, but exits with `tauri-driver is not supported on
+this platform`; use browser preview E2E plus manual native Tauri dev checks there until upstream
+macOS support exists.
 
 ### Demo data for screenshots
 
