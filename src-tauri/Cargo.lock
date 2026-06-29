@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "cimon"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "keyring",
  "notify-rust",
