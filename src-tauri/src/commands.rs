@@ -72,6 +72,55 @@ fn storage_err(e: impl std::fmt::Display) -> CommandError {
     CommandError::new(CommandErrorKind::Storage, e.to_string())
 }
 
+fn validate_web_url(input: &str) -> Result<(), CommandError> {
+    let parsed = Url::parse(input.trim())
+        .map_err(|_| CommandError::new(CommandErrorKind::InvalidInput, "not a valid URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(CommandError::new(
+            CommandErrorKind::InvalidInput,
+            "URL must be http or https",
+        ));
+    }
+    Ok(())
+}
+
+fn authorize_webview_access(
+    label: &str,
+    origin: &str,
+    allowed_labels: &[&str],
+) -> Result<(), CommandError> {
+    if !allowed_labels.contains(&label) {
+        return Err(CommandError::new(
+            CommandErrorKind::Unauthorized,
+            "window not allowed",
+        ));
+    }
+
+    let local_dev_origin = cfg!(debug_assertions)
+        && (origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:"));
+    let tauri_origin = origin == "tauri://localhost" || origin == "https://tauri.localhost";
+    if !tauri_origin && !local_dev_origin {
+        return Err(CommandError::new(
+            CommandErrorKind::Unauthorized,
+            "invalid origin",
+        ));
+    }
+
+    Ok(())
+}
+
+fn require_webview(
+    webview: &tauri::WebviewWindow,
+    allowed_labels: &[&str],
+) -> Result<(), CommandError> {
+    let origin = webview
+        .url()
+        .map_err(|e| CommandError::new(CommandErrorKind::Unauthorized, e.to_string()))?
+        .origin()
+        .ascii_serialization();
+    authorize_webview_access(webview.label(), &origin, allowed_labels)
+}
+
 /// Validate and normalize an instance base URL BEFORE any token is sent to it.
 ///
 /// Requires `https` (unless `allow_insecure`), rejects embedded credentials, fragments, and
@@ -207,6 +256,9 @@ fn set_monitored_logic(
                 ));
             }
         }
+    }
+    for p in &projects {
+        validate_web_url(&p.web_url)?;
     }
     // Replace only this account's selections; other accounts keep theirs.
     guard.monitored.retain(|m| m.account_id != account_id);
@@ -427,12 +479,14 @@ impl AppState {
 
 #[tauri::command]
 pub async fn add_account(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     provider: ProviderKind,
     label: String,
     base_url: String,
     token: String,
 ) -> Result<Identity, CommandError> {
+    require_webview(&webview, &["main"])?;
     add_account_logic(
         &state.http,
         &*state.tokens,
@@ -448,20 +502,31 @@ pub async fn add_account(
 }
 
 #[tauri::command]
-pub fn remove_account(state: tauri::State<'_, AppState>, id: String) -> Result<(), CommandError> {
+pub fn remove_account(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     remove_account_logic(&*state.tokens, &state.config, &state.config_path, &id)
 }
 
 #[tauri::command]
-pub fn list_accounts(state: tauri::State<'_, AppState>) -> Vec<Account> {
-    state.config.lock().unwrap().accounts.clone()
+pub fn list_accounts(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<Account>, CommandError> {
+    require_webview(&webview, &["main"])?;
+    Ok(state.config.lock().unwrap().accounts.clone())
 }
 
 #[tauri::command]
 pub async fn list_discovered_projects(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     account_id: String,
 ) -> Result<Vec<DiscoveredProject>, CommandError> {
+    require_webview(&webview, &["main"])?;
     // Fixtures mode serves the fabricated tree without touching the network (no token to poll with).
     if let Some(fx) = &state.fixtures {
         return Ok(fx.discovered.get(&account_id).cloned().unwrap_or_default());
@@ -470,22 +535,32 @@ pub async fn list_discovered_projects(
 }
 
 #[tauri::command]
-pub fn get_config(state: tauri::State<'_, AppState>) -> Config {
-    state.config.lock().unwrap().clone()
+pub fn get_config(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Config, CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
+    Ok(state.config.lock().unwrap().clone())
 }
 
 #[tauri::command]
-pub fn get_monitored_projects(state: tauri::State<'_, AppState>) -> Vec<MonitoredProject> {
-    state.config.lock().unwrap().monitored.clone()
+pub fn get_monitored_projects(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<MonitoredProject>, CommandError> {
+    require_webview(&webview, &["main"])?;
+    Ok(state.config.lock().unwrap().monitored.clone())
 }
 
 #[tauri::command]
 pub fn set_monitored_projects(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     account_id: String,
     projects: Vec<MonitoredProject>,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     set_monitored_logic(&state.config, &state.config_path, &account_id, projects)?;
     // The tray menu no longer lists projects (they live in the popover panel), so nudge an open
     // panel to re-fetch instead of rebuilding the menu.
@@ -495,25 +570,34 @@ pub fn set_monitored_projects(
 
 #[tauri::command]
 pub fn set_notification_rules(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     rules: NotificationRules,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     let mut guard = state.config.lock().unwrap();
     guard.rules = rules;
     config::save(&state.config_path, &guard).map_err(storage_err)
 }
 
 #[tauri::command]
-pub fn set_poll_interval(state: tauri::State<'_, AppState>, secs: u64) -> Result<(), CommandError> {
+pub fn set_poll_interval(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    secs: u64,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     set_poll_interval_logic(&state.config, &state.config_path, secs)
 }
 
 #[tauri::command]
 pub fn set_locale(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     code: String,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     set_locale_logic(&state.config, &state.config_path, &code)?;
     crate::tray::refresh(&app); // retranslate the tray menu now (it reads the global locale)
     Ok(())
@@ -521,10 +605,12 @@ pub fn set_locale(
 
 #[tauri::command]
 pub fn set_ui_mode(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     mode: UiMode,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     set_ui_mode_logic(&state.config, &state.config_path, mode)?;
     // Keep the settings window's native chrome in step with the chosen theme (the webview content
     // is themed by the frontend). Applied now so the titlebar switches with the rest of the UI.
@@ -534,10 +620,12 @@ pub fn set_ui_mode(
 
 #[tauri::command]
 pub fn set_launch_at_login(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main"])?;
     use tauri_plugin_autostart::ManagerExt;
     {
         let mut guard = state.config.lock().unwrap();
@@ -588,11 +676,15 @@ fn build_panel_projects(
 }
 
 #[tauri::command]
-pub fn get_project_statuses(state: tauri::State<'_, AppState>) -> Vec<PanelProject> {
+pub fn get_project_statuses(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<PanelProject>, CommandError> {
+    require_webview(&webview, &["panel"])?;
     let cfg = state.config.lock().unwrap();
     let snapshot = state.project_status.lock().unwrap();
     let health = state.token_health.lock().unwrap();
-    build_panel_projects(&cfg, &snapshot, &health)
+    Ok(build_panel_projects(&cfg, &snapshot, &health))
 }
 
 /// Join the account list onto the runtime token-health snapshot, one entry per account in config
@@ -620,10 +712,14 @@ fn build_token_health(
 }
 
 #[tauri::command]
-pub fn get_token_health(state: tauri::State<'_, AppState>) -> Vec<AccountTokenHealth> {
+pub fn get_token_health(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AccountTokenHealth>, CommandError> {
+    require_webview(&webview, &["main"])?;
     let cfg = state.config.lock().unwrap();
     let health = state.token_health.lock().unwrap();
-    build_token_health(&cfg, &health, crate::expiry::now_unix())
+    Ok(build_token_health(&cfg, &health, crate::expiry::now_unix()))
 }
 
 /// Replace the token for an existing account in place (the only way to recover from an expired or
@@ -731,10 +827,12 @@ async fn update_account_token_logic(
 
 #[tauri::command]
 pub async fn update_account_token(
+    webview: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     account_id: String,
     token: String,
 ) -> Result<Identity, CommandError> {
+    require_webview(&webview, &["main"])?;
     update_account_token_logic(
         &state.http,
         &*state.tokens,
@@ -767,10 +865,26 @@ pub(crate) fn open_external_url(app: &tauri::AppHandle, url: &str) -> Result<(),
     Ok(())
 }
 
-/// Open a monitored project's pipeline page in the default browser, then hide the panel. The URL
-/// comes from the panel (a monitored project's `web_url`).
+/// Open a monitored project's pipeline page in the default browser, then hide the panel. The panel
+/// sends stable IDs; Rust resolves the backend-owned URL from config before opening it.
 #[tauri::command]
-pub fn open_project_url(app: tauri::AppHandle, url: String) -> Result<(), CommandError> {
+pub fn open_project_url(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    project_id: u64,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
+    let url = {
+        let guard = state.config.lock().unwrap();
+        guard
+            .monitored
+            .iter()
+            .find(|p| p.account_id == account_id && p.project_id == project_id)
+            .map(|p| p.web_url.clone())
+            .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "project not found"))?
+    };
     open_external_url(&app, &url)?;
     crate::panel::hide(&app);
     Ok(())
@@ -801,65 +915,93 @@ pub fn app_info() -> AppInfo {
 
 /// Open the settings window (and reveal the macOS dock icon) and hide the panel.
 #[tauri::command]
-pub fn show_settings_window(app: tauri::AppHandle) {
+pub fn show_settings_window(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
     crate::window::show_main(&app);
     crate::panel::hide(&app);
+    Ok(())
 }
 
 /// Quit the application (the panel's Quit action; mirrors the tray fallback menu's Quit).
 #[tauri::command]
-pub fn quit_app(app: tauri::AppHandle) {
+pub fn quit_app(webview: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
     app.exit(0);
+    Ok(())
 }
 
 /// Hide the panel (used by the panel's Escape key and after navigating away).
 #[tauri::command]
-pub fn hide_panel(app: tauri::AppHandle) {
+pub fn hide_panel(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
     crate::panel::hide(&app);
+    Ok(())
 }
 
 /// Resize the panel to fit its measured content height (clamped in `panel`), then re-anchor it.
 /// Called by the panel after it renders so the popover hugs its content yet caps and scrolls.
 #[tauri::command]
-pub fn set_panel_height(app: tauri::AppHandle, height: f64) {
+pub fn set_panel_height(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    height: f64,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
     crate::panel::set_height(&app, height);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn get_update_state(state: tauri::State<'_, AppState>) -> crate::updates::UpdateState {
-    state.updates.state()
+pub fn get_update_state(
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::updates::UpdateState, CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
+    Ok(state.updates.state())
 }
 
 #[tauri::command]
 pub async fn check_for_updates(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::updates::UpdateState, CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
     let updates = state.updates.clone();
     Ok(updates.check(&app, true).await)
 }
 
 #[tauri::command]
 pub async fn install_update(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::updates::UpdateState, CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
     let updates = state.updates.clone();
     updates.install(&app).await
 }
 
 #[tauri::command]
 pub fn dismiss_update(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> crate::updates::UpdateState {
+) -> Result<crate::updates::UpdateState, CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
     let snapshot = state.updates.dismiss(&app);
     persist_dismissed_version(
         &state.config,
         &state.config_path,
         snapshot.dismissed_version.clone(),
     );
-    snapshot
+    Ok(snapshot)
 }
 
 /// Persist the dismissed update version to the config file so the dismissal survives a restart.
@@ -876,10 +1018,12 @@ fn persist_dismissed_version(cfg: &Mutex<Config>, cfg_path: &Path, version: Opti
 
 #[tauri::command]
 pub fn open_update_release(
+    webview: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     from_panel: bool,
 ) -> Result<(), CommandError> {
+    require_webview(&webview, &["main", "panel"])?;
     open_external_url(&app, &state.updates.release_url())?;
     // Only the tray popover hides itself after opening a link; the Settings window stays put, so
     // opening the release page from Settings must not dismiss an unrelated panel.
@@ -975,6 +1119,26 @@ mod tests {
             validate_base_url("https://[2001:db8::1]:8443/api", false).unwrap(),
             "https://[2001:db8::1]:8443"
         );
+    }
+
+    #[test]
+    fn authorize_webview_access_allows_matching_label_and_tauri_origin() {
+        assert!(authorize_webview_access("main", "tauri://localhost", &["main"]).is_ok());
+        assert!(authorize_webview_access("panel", "tauri://localhost", &["main", "panel"]).is_ok());
+    }
+
+    #[test]
+    fn authorize_webview_access_rejects_disallowed_label() {
+        let err = authorize_webview_access("panel", "tauri://localhost", &["main"]).unwrap_err();
+
+        assert_eq!(err.kind, CommandErrorKind::Unauthorized);
+    }
+
+    #[test]
+    fn authorize_webview_access_rejects_invalid_origin() {
+        let err = authorize_webview_access("main", "https://evil.example", &["main"]).unwrap_err();
+
+        assert_eq!(err.kind, CommandErrorKind::Unauthorized);
     }
 
     #[tokio::test]
@@ -1164,7 +1328,7 @@ mod tests {
             account_id: acct.into(),
             project_id: id,
             name: "p".into(),
-            web_url: "u".into(),
+            web_url: format!("https://example.com/{acct}/{id}"),
             remote_ref: None,
         };
         set_monitored_logic(&cfg, &path, "acctA", vec![mk("acctA", 1)]).unwrap();
@@ -1195,6 +1359,33 @@ mod tests {
     }
 
     #[test]
+    fn set_monitored_rejects_non_http_web_url() {
+        let path = temp_path("monitored-web-url");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let cfg = Mutex::new(Config::default());
+        let project = MonitoredProject {
+            account_id: "acctA".into(),
+            project_id: 1,
+            name: "p".into(),
+            web_url: "file:///tmp/pwn".into(),
+            remote_ref: None,
+        };
+
+        assert_eq!(
+            set_monitored_logic(&cfg, &path, "acctA", vec![project])
+                .unwrap_err()
+                .kind,
+            CommandErrorKind::InvalidInput
+        );
+        assert_eq!(
+            cfg.lock().unwrap().monitored.len(),
+            0,
+            "nothing persisted on rejection"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn set_monitored_rejects_github_project_without_valid_remote_ref() {
         let path = temp_path("gh-monitored");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -1216,7 +1407,7 @@ mod tests {
             account_id: "gh".into(),
             project_id: 1,
             name: "p".into(),
-            web_url: "u".into(),
+            web_url: "https://github.com/acme/web-app".into(),
             remote_ref: remote_ref.map(str::to_string),
         };
         // Missing remote_ref: a GitHub project can never be addressed (owner/repo) -> rejected.

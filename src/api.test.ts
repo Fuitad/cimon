@@ -65,9 +65,9 @@ describe("api.ts invoke contract (inside the Tauri shell)", () => {
   const argCases: Array<[string, (a: Api) => Promise<unknown>, string, Record<string, unknown>]> = [
     [
       "openProjectUrl",
-      (a) => a.openProjectUrl("https://x/p"),
+      (a) => a.openProjectUrl("acc-1", 42),
       "open_project_url",
-      { url: "https://x/p" },
+      { accountId: "acc-1", projectId: 42 },
     ],
     ["setPanelHeight", (a) => a.setPanelHeight(120), "set_panel_height", { height: 120 }],
     [
