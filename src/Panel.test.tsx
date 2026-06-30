@@ -170,7 +170,7 @@ describe("Panel", () => {
 
     await user().click(await screen.findByRole("button", { name: /web-app/ }));
 
-    expect(openProjectUrl).toHaveBeenCalledWith("https://gl/web-app");
+    expect(openProjectUrl).toHaveBeenCalledWith("acc-1", 1);
   });
 
   it("invokes the footer settings and quit actions", async () => {

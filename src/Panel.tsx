@@ -265,7 +265,7 @@ function Panel() {
           type="button"
           className={`prow${failed ? " prow--failed" : ""}`}
           title={p.name}
-          onClick={() => void openProjectUrl(p.web_url)}
+          onClick={() => void openProjectUrl(p.account_id, p.project_id)}
         >
           <span className={`prow__dot prow__dot--${dotClass(p)}`} aria-hidden="true" />
           <span className="prow__main">

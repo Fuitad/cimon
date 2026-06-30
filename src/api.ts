@@ -433,8 +433,8 @@ export const getProjectStatuses = (): Promise<PanelProject[]> => {
   return Promise.resolve(PANEL_FIXTURE);
 };
 
-export const openProjectUrl = (url: string): Promise<void> =>
-  PREVIEW ? Promise.resolve() : invoke("open_project_url", { url });
+export const openProjectUrl = (accountId: string, projectId: number): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("open_project_url", { accountId, projectId });
 
 export const appInfo = (): Promise<AppInfo> =>
   PREVIEW ? Promise.resolve({ version: "dev", commit: "abcdef1" }) : invoke("app_info");
