@@ -386,14 +386,20 @@ pub struct PanelProject {
     pub project_id: u64,
     pub name: String,
     pub web_url: String,
-    /// `None` until the first poll observes this project (or when it has no current pipeline): the
-    /// panel renders that as a neutral "checking" row rather than a fabricated status.
+    /// `None` until the first poll observes this project, or when it has no current pipeline: the
+    /// panel renders that as a neutral "checking" row (or, if `no_pipelines` is set, a settled
+    /// "no CI" row) rather than a fabricated status.
     pub status: Option<PipelineStatus>,
     pub branch: String,
     /// The latest pipeline's `updated_at` (RFC3339), or `None` when never polled. Rendered relative.
     pub updated_at: Option<String>,
     /// `true` when the most recent poll FAILED: status/branch are last-known, shown as offline.
     pub stale: bool,
+    /// `true` when this project has completed at least one successful poll but currently has no
+    /// pipeline at all (no CI configured, or CI that has never run). Distinguishes that settled
+    /// state from a project whose first poll is still in flight, which also carries `status: None`
+    /// and `stale: false` but should keep reading as "checking".
+    pub no_pipelines: bool,
     /// `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
     /// over `stale` in the panel: the row reads "authentication failed", not "offline".
     pub auth_failed: bool,
@@ -703,6 +709,7 @@ fn build_panel_projects(
                 updated_at: view
                     .and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
                 stale: view.is_some_and(|v| v.stale),
+                no_pipelines: view.is_some_and(|v| v.no_pipelines),
                 auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
             }
         })

@@ -24,8 +24,10 @@ const TOKEN_HEALTH_MIN_INTERVAL_SECS: i64 = 300;
 /// plus its current branch, status word, and a relative "updated N ago" time.
 ///
 /// `status` is `None` for a project that has only ever FAILED to poll (no pipeline observed yet):
-/// combined with `stale = true`, the panel renders that as "can't connect", distinct from a
-/// project that simply has not been polled yet (absent from the snapshot entirely -> "checking").
+/// combined with `stale = true`, the panel renders that as "can't connect". A project that has
+/// polled successfully but has no current pipeline at all (no CI configured, or CI that has never
+/// run) is `status: None` + `stale: false` + `no_pipelines: true`, distinct from a project that
+/// simply has not been polled yet (absent from the snapshot entirely -> "checking").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectStatusView {
     /// Last-known normalized status, or `None` when this project has never polled successfully.
@@ -38,6 +40,11 @@ pub struct ProjectStatusView {
     /// shown as offline (last-known kept so a transient blip doesn't blank it); with `status: None`
     /// it has never succeeded, so the row reads "can't connect".
     pub stale: bool,
+    /// `true` when this project HAS completed at least one successful poll but currently has no
+    /// pipeline at all (no CI configured, or CI that has never run). Distinguishes a settled "no CI"
+    /// row from the first-poll-still-in-flight case, which both otherwise carry `status: None` +
+    /// `stale: false`.
+    pub no_pipelines: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +329,7 @@ impl PollState {
                         branch: p.ref_.clone(),
                         updated_at: p.updated_at.clone(),
                         stale: self.stale.contains(k),
+                        no_pipelines: false,
                     },
                 )
             })
@@ -334,6 +342,20 @@ impl PollState {
                 branch: String::new(),
                 updated_at: String::new(),
                 stale: true,
+                no_pipelines: false,
+            });
+        }
+        // Projects that HAVE completed at least one successful poll (tracked in `seen`, populated
+        // by `detect` regardless of pipeline count) but currently have no pipeline at all settle
+        // here rather than being dropped: absence from the map means "first poll still in flight",
+        // which a repo with no CI configured (or CI that has never run) is not.
+        for k in self.seen.keys() {
+            out.entry(k.clone()).or_insert_with(|| ProjectStatusView {
+                status: None,
+                branch: String::new(),
+                updated_at: String::new(),
+                stale: false,
+                no_pipelines: true,
             });
         }
         out
@@ -909,6 +931,25 @@ mod tests {
         // The project's pipelines are gone: it must stop driving the aggregate.
         s.detect(&key(), &[]);
         assert_eq!(s.aggregate_status(), None);
+    }
+
+    #[test]
+    fn polled_project_with_no_pipelines_is_distinct_from_never_polled() {
+        // A repo with no CI configured (or whose CI has never run) polls successfully every tick
+        // but always gets an empty pipeline list. That must NOT look identical to "first poll
+        // still in flight" -- both would otherwise render as an indefinite "checking" row.
+        let mut s = PollState::default();
+        s.detect(&key(), &[]); // first (and only) observation: poll succeeded, zero pipelines
+        let view = s.project_statuses().remove(&key()).expect(
+            "a successfully-polled project must appear in the snapshot even with no pipelines",
+        );
+        assert_eq!(view.status, None);
+        assert!(!view.stale);
+        assert!(view.no_pipelines);
+
+        // A project that has never been polled at all stays absent from the snapshot.
+        let never_polled: ProjectKey = ("acct".into(), 99);
+        assert!(!s.project_statuses().contains_key(&never_polled));
     }
 
     #[test]

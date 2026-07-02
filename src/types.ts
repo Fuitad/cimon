@@ -95,13 +95,19 @@ export interface PanelProject {
   project_id: number;
   name: string;
   web_url: string;
-  /** `null` until the first poll observes this project (a neutral "checking" row). */
+  /** `null` until the first poll observes this project (a neutral "checking" row), or when it has
+   *  no current pipeline (see `no_pipelines`). */
   status: PipelineStatusKind | null;
   branch: string;
   /** Latest pipeline `updated_at` (RFC3339), or `null` when never polled. Rendered relative. */
   updated_at: string | null;
   /** `true` when the most recent poll failed: status/branch are last-known, shown as offline. */
   stale: boolean;
+  /** `true` when this project has completed at least one successful poll but currently has no
+   *  pipeline at all (no CI configured, or CI that has never run). Distinguishes that settled state
+   *  from a project whose first poll is still in flight, which also has `status: null` and
+   *  `stale: false` but should keep reading as "checking". */
+  no_pipelines: boolean;
   /** `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
    *  over `stale`: the row reads "authentication failed", not "offline". */
   auth_failed: boolean;

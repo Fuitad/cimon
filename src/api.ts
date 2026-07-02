@@ -204,7 +204,7 @@ const GITHUB_FIXTURE_PROJECTS: DiscoveredProject[] = [
 // Panel preview fixtures (dev only). `?preview=empty` -> no monitored projects (the panel's
 // empty/CTA state); `?preview=multi` -> two accounts so the per-account grouping is reviewable;
 // default -> one account with a spread of statuses (success, running, failed, pending, stale,
-// never-polled) so every row treatment is visible in a plain browser.
+// never-polled, no CI) so every row treatment is visible in a plain browser.
 const ago = (mins: number): string => new Date(Date.now() - mins * 60_000).toISOString();
 const PANEL_FIXTURE: PanelProject[] = [
   {
@@ -219,6 +219,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(4),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -233,6 +234,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "feature/checkout-v2",
     updated_at: ago(0),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -247,6 +249,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(12),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -261,6 +264,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "release/2.1",
     updated_at: ago(1),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -275,6 +279,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(180),
     stale: true,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -289,6 +294,24 @@ const PANEL_FIXTURE: PanelProject[] = [
     branch: "",
     updated_at: null,
     stale: false,
+    no_pipelines: false,
+    auth_failed: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 47,
+    name: "docs-site",
+    web_url: "https://gitlab.com/acme/docs/docs-site",
+    // Polled successfully but has no CI pipeline at all (no CI configured, or CI never ran): a
+    // settled "no CI" row, distinct from mobile-client above which is still awaiting its first poll.
+    status: null,
+    branch: "",
+    updated_at: null,
+    stale: false,
+    no_pipelines: true,
     auth_failed: false,
   },
 ];
@@ -306,6 +329,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     branch: "main",
     updated_at: ago(7),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
   {
@@ -320,6 +344,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     branch: "fix/very-long-branch-name-for-truncation-testing",
     updated_at: ago(2),
     stale: false,
+    no_pipelines: false,
     auth_failed: false,
   },
 ];
@@ -331,6 +356,7 @@ const PANEL_OFFLINE_FIXTURE: PanelProject[] = [
   { ...PANEL_FIXTURE[2], status: null, branch: "", updated_at: null, stale: true },
   { ...PANEL_FIXTURE[1], status: null, branch: "", updated_at: null, stale: true },
   PANEL_FIXTURE[5], // never polled yet (status null, not stale) -> "checking"
+  PANEL_FIXTURE[6], // polled, no CI at all (status null, not stale, no_pipelines) -> "no CI"
 ];
 
 // `?preview=tokenhealth` exercises the token-health states: one account with a dead token
