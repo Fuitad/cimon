@@ -84,6 +84,32 @@ fn validate_web_url(input: &str) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// Origin-equivalent string for `url`, robust to Tauri's non-`http(s)` custom protocol.
+///
+/// `Url::origin()` follows the WHATWG URL spec: only the "special schemes" (http/https/ws/wss/
+/// ftp) produce a real `scheme://host` tuple, everything else is opaque and serializes to the
+/// literal string "null". Tauri serves the packaged app over its own `tauri://` scheme on macOS
+/// and Linux, which falls into that opaque bucket, so `.origin().ascii_serialization()` alone can
+/// never recover it. Fall back to a manual `scheme://host` whenever the URL still carries a host,
+/// so `tauri://localhost` round-trips correctly; a hostless opaque URL (e.g. `file:` or `data:`)
+/// has no verifiable identity and keeps serializing to "null".
+fn webview_origin_string(url: &Url) -> String {
+    let origin = url.origin();
+    if origin.is_tuple() {
+        return origin.ascii_serialization();
+    }
+    // Opaque (non-"special"-scheme) URLs are not ASCII-lowercased by the `url` crate the way
+    // "special" schemes are, and `url.origin()` gives us no port for them either; reconstruct
+    // both by hand so this fallback matches `Origin::ascii_serialization()`'s own conventions.
+    match url.host_str() {
+        Some(host) => match url.port() {
+            Some(port) => format!("{}://{}:{port}", url.scheme(), host.to_ascii_lowercase()),
+            None => format!("{}://{}", url.scheme(), host.to_ascii_lowercase()),
+        },
+        None => origin.ascii_serialization(),
+    }
+}
+
 fn authorize_webview_access(
     label: &str,
     origin: &str,
@@ -98,7 +124,13 @@ fn authorize_webview_access(
 
     let local_dev_origin = cfg!(debug_assertions)
         && (origin.starts_with("http://localhost:") || origin.starts_with("http://127.0.0.1:"));
-    let tauri_origin = origin == "tauri://localhost" || origin == "https://tauri.localhost";
+    // macOS/Linux serve production windows over the bare `tauri://` scheme. Windows shims it over
+    // http(s) as `<scheme>://tauri.localhost`; absent `useHttpsScheme` in tauri.conf.json, Tauri
+    // v2 defaults that shim to `http`, not `https`.
+    let tauri_origin = matches!(
+        origin,
+        "tauri://localhost" | "https://tauri.localhost" | "http://tauri.localhost"
+    );
     if !tauri_origin && !local_dev_origin {
         return Err(CommandError::new(
             CommandErrorKind::Unauthorized,
@@ -113,12 +145,14 @@ fn require_webview(
     webview: &tauri::WebviewWindow,
     allowed_labels: &[&str],
 ) -> Result<(), CommandError> {
-    let origin = webview
+    let url = webview
         .url()
-        .map_err(|e| CommandError::new(CommandErrorKind::Unauthorized, e.to_string()))?
-        .origin()
-        .ascii_serialization();
-    authorize_webview_access(webview.label(), &origin, allowed_labels)
+        .map_err(|e| CommandError::new(CommandErrorKind::Unauthorized, e.to_string()))?;
+    authorize_webview_access(
+        webview.label(),
+        &webview_origin_string(&url),
+        allowed_labels,
+    )
 }
 
 /// Validate and normalize an instance base URL BEFORE any token is sent to it.
@@ -1132,6 +1166,50 @@ mod tests {
         let err = authorize_webview_access("panel", "tauri://localhost", &["main"]).unwrap_err();
 
         assert_eq!(err.kind, CommandErrorKind::Unauthorized);
+    }
+
+    #[test]
+    fn webview_origin_string_recovers_macos_linux_tauri_scheme_origin() {
+        // macOS/Linux serve the packaged app over the literal `tauri://` custom scheme, which is
+        // not one of the URL spec's "special schemes" (http/https/ws/wss/ftp).
+        let url = Url::parse("tauri://localhost/panel.html").unwrap();
+
+        // This is the regression itself: the old `require_webview` derived its origin via
+        // `.origin().ascii_serialization()` alone, which collapses the opaque `tauri://` origin
+        // to the literal string "null" -- so `authorize_webview_access`'s allow-list check never
+        // matched, and every packaged macOS/Linux panel/main command was rejected Unauthorized.
+        assert_eq!(url.origin().ascii_serialization(), "null");
+
+        // The fix recovers the real scheme+host instead, and that value clears the actual
+        // authorization check `require_webview` calls it with.
+        assert_eq!(webview_origin_string(&url), "tauri://localhost");
+        assert!(
+            authorize_webview_access("panel", &webview_origin_string(&url), &["panel"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn webview_origin_string_passes_through_ordinary_tuple_origins() {
+        // http/https (dev server, and Windows' tauri.localhost shim) are unaffected: these are
+        // WHATWG "special schemes", so `Url::origin()` already produces the right tuple.
+        let dev = Url::parse("http://localhost:1420/index.html").unwrap();
+        assert_eq!(webview_origin_string(&dev), "http://localhost:1420");
+        let windows_prod = Url::parse("http://tauri.localhost/panel.html").unwrap();
+        assert_eq!(
+            webview_origin_string(&windows_prod),
+            "http://tauri.localhost"
+        );
+    }
+
+    #[test]
+    fn webview_origin_string_preserves_port_and_lowercases_host_for_opaque_schemes() {
+        // Non-special schemes aren't ASCII-lowercased by the `url` crate and carry no origin-level
+        // port, unlike http/https -- the fallback branch must recover both by hand or a webview
+        // URL that differs only by port or host casing would be indistinguishable to the caller.
+        let ported = Url::parse("tauri://localhost:8080/panel.html").unwrap();
+        assert_eq!(webview_origin_string(&ported), "tauri://localhost:8080");
+        let mixed_case = Url::parse("tauri://LocalHost/panel.html").unwrap();
+        assert_eq!(webview_origin_string(&mixed_case), "tauri://localhost");
     }
 
     #[test]
