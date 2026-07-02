@@ -64,11 +64,16 @@ function dotClass(p: PanelProject): string {
 }
 
 /** Localized status word for a row. A project with no known status is either still being polled
- *  for the first time ("checking") or has only ever failed to reach the server ("can't connect"). */
+ *  for the first time ("checking"), has only ever failed to reach the server ("can't connect"), or
+ *  has polled successfully but has no CI pipeline at all ("no CI"). */
 function statusWord(p: PanelProject, t: TFunction): string {
   // A dead token takes precedence over the (now last-known) pipeline status and the offline state.
   if (p.auth_failed) return t("panel.authFailed");
-  if (p.status === null) return p.stale ? t("panel.unreachable") : t("panel.checking");
+  if (p.status === null) {
+    if (p.stale) return t("panel.unreachable");
+    if (p.no_pipelines) return t("panel.noPipelines");
+    return t("panel.checking");
+  }
   return t(`status.${p.status}`);
 }
 
@@ -119,7 +124,9 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
         break;
       case null:
         if (p.stale) unreachable++;
-        else checking++;
+        // A settled "no CI" row is neither still-checking nor a live signal; it falls through to
+        // the generic project-count headline below rather than padding either count.
+        else if (!p.no_pipelines) checking++;
         break;
       default:
         break; // canceled / skipped / other: settled, not surfaced in the summary headline

@@ -500,6 +500,7 @@ fn view(
         branch: branch.into(),
         updated_at: rfc3339(now - mins_ago * 60),
         stale,
+        no_pipelines: false,
     }
 }
 

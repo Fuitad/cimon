@@ -126,6 +126,7 @@
     "summaryAuthFailed_other": "{{count}} tokens invalid",
     "summaryChecking": "Checking...",
     "checking": "Checking",
+    "noPipelines": "No CI",
     "unreachable": "Can't connect",
     "offline": "offline",
     "authFailed": "token invalid",

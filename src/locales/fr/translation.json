@@ -126,6 +126,7 @@
     "summaryAuthFailed_other": "{{count}} jetons non valides",
     "summaryChecking": "Vérification...",
     "checking": "Vérification",
+    "noPipelines": "Aucune CI",
     "unreachable": "Connexion impossible",
     "offline": "hors ligne",
     "authFailed": "jeton non valide",

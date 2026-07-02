@@ -48,6 +48,7 @@ const row = (over: Partial<PanelProject>): PanelProject => ({
   branch: "main",
   updated_at: null,
   stale: false,
+  no_pipelines: false,
   auth_failed: false,
   ...over,
 });
@@ -134,6 +135,19 @@ describe("Panel", () => {
 
     expect(await screen.findByText("panel.summaryRunning")).toBeInTheDocument();
     expect(screen.queryByText("panel.summaryUnreachable")).toBeNull();
+  });
+
+  it("shows a settled 'no CI' row distinct from a still-checking row", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([
+      // Polled successfully but has no pipeline at all (no CI configured / never ran).
+      row({ project_id: 1, name: "docs-site", status: null, no_pipelines: true }),
+      // Genuinely never polled yet: must keep reading "checking", not "no CI".
+      row({ project_id: 2, name: "web-app", status: null, no_pipelines: false }),
+    ]);
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.noPipelines")).toBeInTheDocument();
+    expect(screen.getByText("panel.checking")).toBeInTheDocument();
   });
 
   it("summarizes all-passing when every project succeeds", async () => {
