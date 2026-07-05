@@ -681,9 +681,15 @@ pub fn set_launch_at_login(
     result.map_err(|e| CommandError::new(CommandErrorKind::Storage, e.to_string()))
 }
 
-/// Monitored projects joined with their latest status, for the tray popover panel. Returns one
-/// entry per monitored project in config order; a project not yet observed by the poller carries a
-/// `None` status (a "checking" row). The frontend groups by account when more than one exists.
+/// Monitored projects joined with their latest status, for the tray popover panel. Returns rows
+/// grouped by account in the SAME order the accounts appear in `cfg.accounts` (the order shown in
+/// Settings), each account's own projects in monitored order; a project not yet observed by the
+/// poller carries a `None` status (a "checking" row). The frontend groups by account when more
+/// than one exists, using first-seen order in this list, so the ordering here is what the user
+/// sees in the popover. Iterating `cfg.accounts` first (rather than `cfg.monitored` directly)
+/// matters because `set_monitored_logic` replaces an account's entries by removing then
+/// re-appending them to `cfg.monitored`, which would otherwise silently move that account to the
+/// end of the panel every time its monitored set is edited.
 /// Join the monitored set with the latest per-project status snapshot and per-account token health
 /// into the panel DTO. Extracted from the command so it is testable without a Tauri runtime.
 fn build_panel_projects(
@@ -691,29 +697,45 @@ fn build_panel_projects(
     snapshot: &HashMap<ProjectKey, ProjectStatusView>,
     health: &HashMap<String, TokenHealthView>,
 ) -> Vec<PanelProject> {
-    cfg.monitored
+    let to_panel_project = |mp: &MonitoredProject| {
+        let acct = cfg.accounts.iter().find(|a| a.id == mp.account_id);
+        let view = snapshot.get(&(mp.account_id.clone(), mp.project_id));
+        PanelProject {
+            account_id: mp.account_id.clone(),
+            account_label: acct.map(|a| a.label.clone()).unwrap_or_default(),
+            provider: acct.map(|a| a.provider).unwrap_or(ProviderKind::Gitlab),
+            base_url: acct.map(|a| a.base_url.clone()).unwrap_or_default(),
+            project_id: mp.project_id,
+            name: mp.name.clone(),
+            web_url: mp.web_url.clone(),
+            status: view.and_then(|v| v.status),
+            branch: view.map(|v| v.branch.clone()).unwrap_or_default(),
+            updated_at: view.and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
+            stale: view.is_some_and(|v| v.stale),
+            no_pipelines: view.is_some_and(|v| v.no_pipelines),
+            auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
+        }
+    };
+
+    let mut rows: Vec<PanelProject> = cfg
+        .accounts
         .iter()
-        .map(|mp| {
-            let acct = cfg.accounts.iter().find(|a| a.id == mp.account_id);
-            let view = snapshot.get(&(mp.account_id.clone(), mp.project_id));
-            PanelProject {
-                account_id: mp.account_id.clone(),
-                account_label: acct.map(|a| a.label.clone()).unwrap_or_default(),
-                provider: acct.map(|a| a.provider).unwrap_or(ProviderKind::Gitlab),
-                base_url: acct.map(|a| a.base_url.clone()).unwrap_or_default(),
-                project_id: mp.project_id,
-                name: mp.name.clone(),
-                web_url: mp.web_url.clone(),
-                status: view.and_then(|v| v.status),
-                branch: view.map(|v| v.branch.clone()).unwrap_or_default(),
-                updated_at: view
-                    .and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
-                stale: view.is_some_and(|v| v.stale),
-                no_pipelines: view.is_some_and(|v| v.no_pipelines),
-                auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
-            }
+        .flat_map(|acct| {
+            cfg.monitored
+                .iter()
+                .filter(move |mp| mp.account_id == acct.id)
+                .map(to_panel_project)
         })
-        .collect()
+        .collect();
+    // A monitored entry whose account no longer exists (should not normally happen; account
+    // removal also clears its monitored entries) still needs to render rather than vanish.
+    rows.extend(
+        cfg.monitored
+            .iter()
+            .filter(|mp| !cfg.accounts.iter().any(|a| a.id == mp.account_id))
+            .map(to_panel_project),
+    );
+    rows
 }
 
 #[tauri::command]
@@ -1605,6 +1627,46 @@ mod tests {
         assert!(
             rows[0].auth_failed,
             "dead-token account flags its project rows"
+        );
+    }
+
+    #[test]
+    fn build_panel_projects_orders_rows_by_account_config_order() {
+        // Reproduces the panel-reorder bug: `set_monitored_logic` replaces one account's entries
+        // by removing then re-appending them to `cfg.monitored`, so the "gl" account's monitored
+        // rows land AFTER "gh"'s in `cfg.monitored` even though "gl" is listed first in
+        // `cfg.accounts` (what Settings shows). The panel grouping must follow account order, not
+        // `cfg.monitored`'s insertion order.
+        let cfg = Config {
+            accounts: vec![
+                account("gl", ProviderKind::Gitlab, "https://gl.example.com"),
+                account("gh", ProviderKind::Github, "https://github.com"),
+            ],
+            monitored: vec![
+                MonitoredProject {
+                    account_id: "gh".into(),
+                    project_id: 1,
+                    name: "gh-project".into(),
+                    web_url: "http://x".into(),
+                    remote_ref: Some("acme/gh-project".into()),
+                },
+                MonitoredProject {
+                    account_id: "gl".into(),
+                    project_id: 2,
+                    name: "gl-project".into(),
+                    web_url: "http://y".into(),
+                    remote_ref: None,
+                },
+            ],
+            ..Config::default()
+        };
+        let rows = build_panel_projects(&cfg, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.account_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gl", "gh"],
+            "rows must follow cfg.accounts order, not cfg.monitored insertion order"
         );
     }
 
