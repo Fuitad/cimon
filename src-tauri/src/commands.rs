@@ -906,8 +906,33 @@ pub(crate) fn open_external_url(app: &tauri::AppHandle, url: &str) -> Result<(),
     Ok(())
 }
 
-/// Open a monitored project's pipeline page in the default browser, then hide the panel. The panel
-/// sends stable IDs; Rust resolves the backend-owned URL from config before opening it.
+/// Resolve the URL a click on a monitored project's panel row should open: while its current
+/// pipeline is running, that's the pipeline's own page (so a click on a running row lands on the
+/// active run instead of the repo's static landing page); otherwise it's the project's page.
+/// Extracted from the command so it is testable without a Tauri runtime.
+fn resolve_open_url(
+    cfg: &Config,
+    statuses: &HashMap<ProjectKey, ProjectStatusView>,
+    account_id: &str,
+    project_id: u64,
+) -> Result<String, CommandError> {
+    let project_url = cfg
+        .monitored
+        .iter()
+        .find(|p| p.account_id == account_id && p.project_id == project_id)
+        .map(|p| p.web_url.clone())
+        .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "project not found"))?;
+    let key = (account_id.to_string(), project_id);
+    Ok(match statuses.get(&key) {
+        Some(v) if v.status == Some(PipelineStatus::Running) && !v.pipeline_url.is_empty() => {
+            v.pipeline_url.clone()
+        }
+        _ => project_url,
+    })
+}
+
+/// Open a monitored project's page in the default browser, then hide the panel. The panel sends
+/// stable IDs; Rust resolves the backend-owned URL before opening it (see [`resolve_open_url`]).
 #[tauri::command]
 pub fn open_project_url(
     webview: tauri::WebviewWindow,
@@ -919,12 +944,8 @@ pub fn open_project_url(
     require_webview(&webview, &["panel"])?;
     let url = {
         let guard = state.config.lock().unwrap();
-        guard
-            .monitored
-            .iter()
-            .find(|p| p.account_id == account_id && p.project_id == project_id)
-            .map(|p| p.web_url.clone())
-            .ok_or_else(|| CommandError::new(CommandErrorKind::NotFound, "project not found"))?
+        let statuses = state.project_status.lock().unwrap();
+        resolve_open_url(&guard, &statuses, &account_id, project_id)?
     };
     open_external_url(&app, &url)?;
     crate::panel::hide(&app);
@@ -1584,6 +1605,84 @@ mod tests {
         assert!(
             rows[0].auth_failed,
             "dead-token account flags its project rows"
+        );
+    }
+
+    #[test]
+    fn resolve_open_url_prefers_pipeline_url_while_running() {
+        let cfg = Config {
+            monitored: vec![MonitoredProject {
+                account_id: "a".into(),
+                project_id: 1,
+                name: "p".into(),
+                web_url: "https://github.com/acme/p".into(),
+                remote_ref: None,
+            }],
+            ..Config::default()
+        };
+        let statuses = HashMap::from([(
+            ("a".to_string(), 1),
+            ProjectStatusView {
+                status: Some(PipelineStatus::Running),
+                branch: "main".into(),
+                updated_at: String::new(),
+                stale: false,
+                no_pipelines: false,
+                pipeline_url: "https://github.com/acme/p/actions/runs/55".into(),
+            },
+        )]);
+        assert_eq!(
+            resolve_open_url(&cfg, &statuses, "a", 1).unwrap(),
+            "https://github.com/acme/p/actions/runs/55",
+            "a running row should open the active run, not the project page"
+        );
+    }
+
+    #[test]
+    fn resolve_open_url_falls_back_to_project_url_when_not_running() {
+        let cfg = Config {
+            monitored: vec![MonitoredProject {
+                account_id: "a".into(),
+                project_id: 1,
+                name: "p".into(),
+                web_url: "https://github.com/acme/p".into(),
+                remote_ref: None,
+            }],
+            ..Config::default()
+        };
+        let statuses = HashMap::from([(
+            ("a".to_string(), 1),
+            ProjectStatusView {
+                status: Some(PipelineStatus::Success),
+                branch: "main".into(),
+                updated_at: String::new(),
+                stale: false,
+                no_pipelines: false,
+                pipeline_url: "https://github.com/acme/p/actions/runs/54".into(),
+            },
+        )]);
+        assert_eq!(
+            resolve_open_url(&cfg, &statuses, "a", 1).unwrap(),
+            "https://github.com/acme/p",
+            "a settled row should still open the project page"
+        );
+    }
+
+    #[test]
+    fn resolve_open_url_falls_back_when_no_status_snapshot_yet() {
+        let cfg = Config {
+            monitored: vec![MonitoredProject {
+                account_id: "a".into(),
+                project_id: 1,
+                name: "p".into(),
+                web_url: "https://github.com/acme/p".into(),
+                remote_ref: None,
+            }],
+            ..Config::default()
+        };
+        assert_eq!(
+            resolve_open_url(&cfg, &HashMap::new(), "a", 1).unwrap(),
+            "https://github.com/acme/p"
         );
     }
 

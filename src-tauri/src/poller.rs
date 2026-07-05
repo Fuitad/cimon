@@ -45,6 +45,10 @@ pub struct ProjectStatusView {
     /// row from the first-poll-still-in-flight case, which both otherwise carry `status: None` +
     /// `stale: false`.
     pub no_pipelines: bool,
+    /// The current pipeline's own page (empty when there is none). `open_project_url` opens this
+    /// instead of the project's static page while `status` is `Running`, so clicking an in-progress
+    /// row lands on the active run rather than the repo's landing page.
+    pub pipeline_url: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,6 +334,7 @@ impl PollState {
                         updated_at: p.updated_at.clone(),
                         stale: self.stale.contains(k),
                         no_pipelines: false,
+                        pipeline_url: p.web_url.clone(),
                     },
                 )
             })
@@ -343,6 +348,7 @@ impl PollState {
                 updated_at: String::new(),
                 stale: true,
                 no_pipelines: false,
+                pipeline_url: String::new(),
             });
         }
         // Projects that HAVE completed at least one successful poll (tracked in `seen`, populated
@@ -356,6 +362,7 @@ impl PollState {
                 updated_at: String::new(),
                 stale: false,
                 no_pipelines: true,
+                pipeline_url: String::new(),
             });
         }
         out
@@ -1221,6 +1228,10 @@ mod tests {
         assert_eq!(
             a.updated_at, "2026-06-20T00:00:00Z",
             "the latest pipeline's updated_at is surfaced for the relative-time row"
+        );
+        assert_eq!(
+            a.pipeline_url, "http://x/1",
+            "the current pipeline's own page is surfaced for the open-on-click command"
         );
         let b = snap
             .get(&("acct".to_string(), 20))
