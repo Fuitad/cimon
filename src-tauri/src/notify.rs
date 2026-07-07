@@ -206,6 +206,42 @@ pub fn notify_transition(
     show_clickable(app, title, body, url, action_label);
 }
 
+/// Clear all of CIMon's delivered notifications from the macOS Notification Center.
+///
+/// The legacy `NSUserNotificationCenter` backend `notify-rust` uses on macOS installs a repeating
+/// 0.5s timer on the *main* run loop for every clickable notification (see `mac-notification-sys`'s
+/// `objc/notify.m`), and that timer only stops once the notification leaves `deliveredNotifications`.
+/// macOS never auto-removes a delivered banner, so absent this call the timers, and the poller
+/// threads blocked on them, accumulate for the life of the process. Each tick does a synchronous
+/// cross-process query on the main thread, which is the same thread that services tray-menu clicks,
+/// so a long-running instance ends up with the menu bar frozen behind a backlog of pollers.
+///
+/// Clearing the delivered list right before showing a new notification lets every stale poller
+/// observe the disappearance on its next tick and terminate, bounding the number of live pollers to
+/// roughly one. The trade-off (accepted): only the most recent CIMon notification stays in
+/// Notification Center, so a click on an older one is no longer delivered.
+///
+/// `removeAllDeliveredNotifications` is app-scoped: it only affects notifications posted under
+/// CIMon's own identity (in dev, the borrowed Terminal identity set in [`init`]), never other apps'.
+#[cfg(target_os = "macos")]
+fn clear_delivered_notifications() {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    autoreleasepool(|_| unsafe {
+        // `class!` would panic if the class were ever absent; `AnyClass::get` degrades to a no-op
+        // instead, so a future macOS that drops the deprecated class can't crash the poller thread.
+        let Some(cls) = AnyClass::get(c"NSUserNotificationCenter") else {
+            return;
+        };
+        let center: *mut AnyObject = objc2::msg_send![cls, defaultUserNotificationCenter];
+        if center.is_null() {
+            return;
+        }
+        let _: () = objc2::msg_send![center, removeAllDeliveredNotifications];
+    });
+}
+
 /// Show a native notification that opens `url` when the user clicks it.
 ///
 /// The Tauri notification plugin drops desktop click events (its action events are mobile-only),
@@ -227,6 +263,11 @@ fn show_clickable(
 ) {
     let app = app.clone();
     std::thread::spawn(move || {
+        // Drop stale delivered notifications first so their main-run-loop poller timers self-
+        // terminate; without this, one timer per past notification piles up and freezes the menu.
+        #[cfg(target_os = "macos")]
+        clear_delivered_notifications();
+
         let mut builder = notify_rust::Notification::new();
         builder
             .summary(&title)

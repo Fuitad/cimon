@@ -55,6 +55,13 @@ sys-locale = "0.3"
 tauri-plugin-updater = "2"
 semver = "1"
 
+# Direct access to the deprecated NSUserNotificationCenter (already in the tree via
+# mac-notification-sys) so CIMon can clear its own delivered notifications. This stops the
+# per-notification main-run-loop poller timers that notify-rust installs from piling up for the
+# life of the process. See `notify::clear_delivered_notifications`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 [dev-dependencies]
 wiremock = "0.6"
 

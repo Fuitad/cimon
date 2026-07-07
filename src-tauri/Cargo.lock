@@ -572,6 +572,7 @@ version = "0.1.8"
 dependencies = [
  "keyring",
  "notify-rust",
+ "objc2",
  "reqwest 0.12.28",
  "rust-i18n",
  "semver",
