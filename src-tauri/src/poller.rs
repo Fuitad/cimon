@@ -136,11 +136,17 @@ fn newest_pipeline(latest: &[Pipeline]) -> Option<&Pipeline> {
 /// or skipped run). This keeps the project "in progress" until all of that commit's runs settle,
 /// then reflects the commit's true outcome.
 ///
+/// This grouping only applies when the newest pipeline's provider genuinely fans one trigger out
+/// into several simultaneous runs; see [`Pipeline::commit_fanout`] for why GitLab opts out and
+/// returns the newest pipeline's own status unconditionally instead.
+///
 /// The newest run supplies the branch / url / timestamp; only its status is replaced by the
-/// aggregate. GitLab returns one pipeline per commit, so the group is a single run and this
-/// collapses to "the newest pipeline" there. Returns `None` for an empty list.
+/// aggregate. Returns `None` for an empty list.
 fn aggregate_current(latest: &[Pipeline]) -> Option<Pipeline> {
     let newest = newest_pipeline(latest)?;
+    if !newest.commit_fanout {
+        return Some(newest.clone());
+    }
     let runs = || {
         latest
             .iter()
@@ -928,6 +934,29 @@ mod tests {
             s.aggregate_status(),
             Some(PipelineStatus::Running),
             "a still-building newer commit must not be masked by an older commit that settled later"
+        );
+    }
+
+    #[test]
+    fn gitlab_stale_scheduled_pipeline_does_not_redden_a_later_pipeline_on_the_same_sha() {
+        // GitLab's scheduled (and api-triggered) pipelines run against the branch's CURRENT head sha,
+        // not a new commit, so two pipelines can share a sha while being unrelated, time-separated
+        // triggers: an old nightly schedule that failed, and a later pipeline that passed against the
+        // very same still-unchanged commit. GitLab pipelines are not a push fan-out (commit_fanout =
+        // false), so the newer pipeline's own status must win outright -- the older scheduled failure
+        // must not redden it.
+        let mut newer = pipeline(2, PipelineStatus::Success);
+        newer.sha = "sharedsha".into();
+        newer.commit_fanout = false;
+        let mut older = pipeline(1, PipelineStatus::Failed);
+        older.sha = "sharedsha".into();
+        older.commit_fanout = false;
+        let mut s = PollState::default();
+        s.detect(&key(), &[newer, older]);
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Success),
+            "a stale scheduled failure on an unchanged sha must not redden a later, unrelated pass"
         );
     }
 
