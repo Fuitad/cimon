@@ -912,7 +912,7 @@ mod tests {
         // commit's pipeline finishes Success AFTER a newer commit's pipeline has started, so the
         // older one carries the LATER `updated_at`. GitLab lists by `updated_at desc`, so the older,
         // settled pipeline sorts FIRST even though the newer commit's pipeline is still running.
-        // running. Picking the list head would let the settled older run mask the in-flight newer one
+        // Picking the list head would let the settled older run mask the in-flight newer one (project
         // shows green while the newer commit builds). The aggregate must follow the newest commit by id.
         let mut newer_running = pipeline(12, PipelineStatus::Running);
         newer_running.sha = "commitb".into();
