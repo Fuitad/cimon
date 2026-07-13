@@ -753,6 +753,7 @@ mod tests {
             sha: "abc".into(),
             web_url: format!("http://x/{id}"),
             updated_at: "2026-06-20T00:00:00Z".into(),
+            commit_fanout: true,
         }
     }
 

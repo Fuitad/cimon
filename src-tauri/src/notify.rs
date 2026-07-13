@@ -325,6 +325,7 @@ mod tests {
             sha: "abc".into(),
             web_url: "http://x/1".into(),
             updated_at: "t".into(),
+            commit_fanout: true,
         }
     }
 

@@ -123,6 +123,14 @@ pub struct Pipeline {
     pub sha: String,
     pub web_url: String,
     pub updated_at: String,
+    /// Whether multiple pipelines sharing this run's `sha` are the SAME trigger fanning out (e.g. one
+    /// GitHub push firing several workflow files simultaneously) and should be aggregated together,
+    /// worst status across the group wins (see `poller::aggregate_current`). GitLab pipelines are each
+    /// an independently triggered, self-contained result: a schedule- or api-triggered pipeline runs
+    /// against the branch's CURRENT head sha, so it can share a sha with an unrelated pipeline hours or
+    /// days earlier simply because no new commit landed in between. Grouping those would let a stale
+    /// scheduled failure redden a later, unrelated pass, so GitLab sets this `false`.
+    pub commit_fanout: bool,
 }
 
 /// A normalized job within a pipeline (a GitLab job, later a GitHub workflow job).

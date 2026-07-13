@@ -250,6 +250,8 @@ impl Provider for GithubProvider {
                 sha: r.head_sha.unwrap_or_default(),
                 web_url: r.html_url,
                 updated_at: r.updated_at.unwrap_or_default(),
+                // See `Pipeline::commit_fanout`: GitHub opts in to fanout grouping.
+                commit_fanout: true,
             })
             .collect())
     }

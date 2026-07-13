@@ -261,6 +261,8 @@ impl Provider for GitlabProvider {
                 sha: p.sha.unwrap_or_default(),
                 web_url: p.web_url,
                 updated_at: p.updated_at.unwrap_or_default(),
+                // See `Pipeline::commit_fanout` for why GitLab pipelines opt out of fanout grouping.
+                commit_fanout: false,
             })
             .collect())
     }
