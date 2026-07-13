@@ -1,6 +1,6 @@
 [package]
 name = "cimon"
-version = "0.1.10"
+version = "0.1.11"
 description = "CIMon: a cross-platform CI pipeline monitor for the system tray / menu bar"
 authors = ["Pierre-Luc Brunet <fuitad@gmail.com>"]
 license = "MIT"
@@ -69,4 +69,3 @@ wiremock = "0.6"
 available-locales = ["en", "fr"]
 default-locale = "en"
 load-path = "locales"
-
