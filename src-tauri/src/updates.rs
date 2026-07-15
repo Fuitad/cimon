@@ -181,6 +181,12 @@ impl UpdateManager {
             return Err(self.restore_install_error(&previous, error, app));
         }
 
+        // macOS assesses a replaced bundle asynchronously. Restarting before that assessment
+        // finishes can exit the old process after Gatekeeper rejects the new executable.
+        if let Err(error) = wait_for_macos_relaunch_approval(app) {
+            return Err(self.restore_install_error(&previous, error, app));
+        }
+
         // On macOS, download_and_install returns after swapping the app bundle, so this is the
         // completion and relaunch path. On Windows, tauri-plugin-updater runs the NSIS installer
         // and calls std::process::exit(0) inside download_and_install above, so control never
@@ -351,6 +357,72 @@ fn progress_percent(downloaded: u64, total: Option<u64>) -> Option<u64> {
         Some(total) if total > 0 => Some(downloaded.saturating_mul(100) / total),
         _ => None,
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+const MACOS_RELAUNCH_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(any(target_os = "macos", test))]
+const MACOS_RELAUNCH_CHECK_ATTEMPTS: usize = 100;
+
+#[cfg(any(target_os = "macos", test))]
+fn wait_for_relaunch_approval(
+    mut is_approved: impl FnMut() -> bool,
+    mut wait: impl FnMut(std::time::Duration),
+) -> bool {
+    for attempt in 0..MACOS_RELAUNCH_CHECK_ATTEMPTS {
+        if is_approved() {
+            return true;
+        }
+        if attempt + 1 < MACOS_RELAUNCH_CHECK_ATTEMPTS {
+            wait(MACOS_RELAUNCH_CHECK_INTERVAL);
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_macos_relaunch_approval(app: &tauri::AppHandle) -> Result<(), CommandError> {
+    use std::process::{Command, Stdio};
+
+    let binary = tauri::process::current_binary(&app.env())
+        .map_err(|error| CommandError::new(CommandErrorKind::Storage, error.to_string()))?;
+    let bundle = binary
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .filter(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .ok_or_else(|| {
+            CommandError::new(
+                CommandErrorKind::Storage,
+                "updated application bundle path could not be resolved",
+            )
+        })?;
+
+    let approved = wait_for_relaunch_approval(
+        || {
+            Command::new("/usr/sbin/spctl")
+                .args(["--assess", "--type", "execute"])
+                .arg(bundle)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        },
+        std::thread::sleep,
+    );
+    if approved {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            CommandErrorKind::Storage,
+            "update installed, but macOS did not approve the automatic relaunch; restart CIMon manually",
+        ))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn wait_for_macos_relaunch_approval(_: &tauri::AppHandle) -> Result<(), CommandError> {
+    Ok(())
 }
 
 /// Whether a native "update available" notification should fire for `version`: only when it was
@@ -651,5 +723,23 @@ mod tests {
         assert!(!should_notify_version("0.1.4", None, Some("0.1.4")));
         // A newer version supersedes both a prior notification and an older dismissal.
         assert!(should_notify_version("0.1.5", Some("0.1.4"), Some("0.1.4")));
+    }
+
+    #[test]
+    fn macos_relaunch_waits_until_replacement_bundle_is_approved() {
+        let mut checks = 0;
+        let mut waits = Vec::new();
+
+        let approved = wait_for_relaunch_approval(
+            || {
+                checks += 1;
+                checks == 3
+            },
+            |duration| waits.push(duration),
+        );
+
+        assert!(approved);
+        assert_eq!(checks, 3);
+        assert_eq!(waits, vec![MACOS_RELAUNCH_CHECK_INTERVAL; 2]);
     }
 }
