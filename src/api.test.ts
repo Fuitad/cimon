@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { withTauri, withoutTauri } from "./test/utils";
-import type { MonitoredProject, NotificationRules, UpdateState } from "./types";
+import { DEFAULT_NOTIFICATION_RULES } from "./types";
+import type { MonitoredProject, UpdateState } from "./types";
 
 // `invoke` is replaced so the production-path tests can assert the Tauri command name + args without
 // a real shell. The factory re-runs after each `vi.resetModules()`, yielding a fresh mock that the
@@ -9,17 +10,6 @@ import type { MonitoredProject, NotificationRules, UpdateState } from "./types";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 type Api = typeof import("./api");
-
-const DEFAULT_RULES: NotificationRules = {
-  on_start: false,
-  on_success: true,
-  on_fail: true,
-  on_cancel: false,
-  job_on_start: false,
-  job_on_success: false,
-  job_on_fail: false,
-  job_on_cancel: false,
-};
 
 describe("api.ts invoke contract (inside the Tauri shell)", () => {
   let api: Api;
@@ -105,9 +95,9 @@ describe("api.ts invoke contract (inside the Tauri shell)", () => {
     ],
     [
       "setNotificationRules",
-      (a) => a.setNotificationRules(DEFAULT_RULES),
+      (a) => a.setNotificationRules(DEFAULT_NOTIFICATION_RULES),
       "set_notification_rules",
-      { rules: DEFAULT_RULES },
+      { rules: DEFAULT_NOTIFICATION_RULES },
     ],
     ["setPollInterval", (a) => a.setPollInterval(45), "set_poll_interval", { secs: 45 }],
     ["setLocale", (a) => a.setLocale("fr"), "set_locale", { code: "fr" }],

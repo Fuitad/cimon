@@ -16,6 +16,7 @@ import {
   setPollInterval,
   setUiMode,
 } from "../api";
+import { DEFAULT_NOTIFICATION_RULES } from "../types";
 import type { Config, UpdateState } from "../types";
 import { renderWithI18n, user } from "../test/utils";
 import SettingsSection from "./SettingsSection";
@@ -41,16 +42,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 const baseConfig: Config = {
   accounts: [],
   monitored: [],
-  rules: {
-    on_start: false,
-    on_success: true,
-    on_fail: true,
-    on_cancel: false,
-    job_on_start: false,
-    job_on_success: false,
-    job_on_fail: false,
-    job_on_cancel: false,
-  },
+  rules: DEFAULT_NOTIFICATION_RULES,
   poll_interval_secs: 45,
   launch_at_login: false,
   locale: null,
@@ -107,14 +99,8 @@ describe("SettingsSection", () => {
     await user().click(screen.getByRole("checkbox", { name: "settings.onStart" }));
 
     expect(setNotificationRules).toHaveBeenCalledWith({
+      ...DEFAULT_NOTIFICATION_RULES,
       on_start: true,
-      on_success: true,
-      on_fail: true,
-      on_cancel: false,
-      job_on_start: false,
-      job_on_success: false,
-      job_on_fail: false,
-      job_on_cancel: false,
     });
   });
 
@@ -125,14 +111,8 @@ describe("SettingsSection", () => {
     await user().click(screen.getByRole("checkbox", { name: "settings.jobOnFail" }));
 
     expect(setNotificationRules).toHaveBeenCalledWith({
-      on_start: false,
-      on_success: true,
-      on_fail: true,
-      on_cancel: false,
-      job_on_start: false,
-      job_on_success: false,
+      ...DEFAULT_NOTIFICATION_RULES,
       job_on_fail: true,
-      job_on_cancel: false,
     });
   });
 
@@ -143,14 +123,8 @@ describe("SettingsSection", () => {
     await user().click(screen.getByRole("checkbox", { name: "settings.onCancel" }));
 
     expect(setNotificationRules).toHaveBeenCalledWith({
-      on_start: false,
-      on_success: true,
-      on_fail: true,
+      ...DEFAULT_NOTIFICATION_RULES,
       on_cancel: true,
-      job_on_start: false,
-      job_on_success: false,
-      job_on_fail: false,
-      job_on_cancel: false,
     });
   });
 

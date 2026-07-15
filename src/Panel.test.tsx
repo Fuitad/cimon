@@ -15,6 +15,7 @@ import {
   quitApp,
   showSettingsWindow,
 } from "./api";
+import { DEFAULT_NOTIFICATION_RULES } from "./types";
 import type { Config, PanelProject, UpdateState } from "./types";
 import { renderWithI18n, user } from "./test/utils";
 import Panel from "./Panel";
@@ -62,16 +63,7 @@ const config = (accountCount: number): Config => ({
     identity: { username: "dev", name: null, email: null },
   })),
   monitored: [],
-  rules: {
-    on_start: false,
-    on_success: true,
-    on_fail: true,
-    on_cancel: false,
-    job_on_start: false,
-    job_on_success: false,
-    job_on_fail: false,
-    job_on_cancel: false,
-  },
+  rules: DEFAULT_NOTIFICATION_RULES,
   poll_interval_secs: 30,
   launch_at_login: false,
   locale: null,
