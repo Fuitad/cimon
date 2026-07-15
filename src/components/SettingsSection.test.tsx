@@ -45,9 +45,11 @@ const baseConfig: Config = {
     on_start: false,
     on_success: true,
     on_fail: true,
+    on_cancel: false,
     job_on_start: false,
     job_on_success: false,
     job_on_fail: false,
+    job_on_cancel: false,
   },
   poll_interval_secs: 45,
   launch_at_login: false,
@@ -108,9 +110,11 @@ describe("SettingsSection", () => {
       on_start: true,
       on_success: true,
       on_fail: true,
+      on_cancel: false,
       job_on_start: false,
       job_on_success: false,
       job_on_fail: false,
+      job_on_cancel: false,
     });
   });
 
@@ -124,9 +128,29 @@ describe("SettingsSection", () => {
       on_start: false,
       on_success: true,
       on_fail: true,
+      on_cancel: false,
       job_on_start: false,
       job_on_success: false,
       job_on_fail: true,
+      job_on_cancel: false,
+    });
+  });
+
+  it("persists the pipeline cancel toggle as the merged rule set", async () => {
+    renderWithI18n(<SettingsSection />);
+    await screen.findByDisplayValue("45");
+
+    await user().click(screen.getByRole("checkbox", { name: "settings.onCancel" }));
+
+    expect(setNotificationRules).toHaveBeenCalledWith({
+      on_start: false,
+      on_success: true,
+      on_fail: true,
+      on_cancel: true,
+      job_on_start: false,
+      job_on_success: false,
+      job_on_fail: false,
+      job_on_cancel: false,
     });
   });
 

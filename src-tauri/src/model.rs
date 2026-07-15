@@ -200,25 +200,34 @@ pub struct NotificationRules {
     pub on_start: bool,
     pub on_success: bool,
     pub on_fail: bool,
+    /// Notify when a pipeline is canceled (manually, or by the provider: a concurrency-group
+    /// cancellation or a timeout GitHub reports as `cancelled`).
+    pub on_cancel: bool,
     /// Notify when an individual job starts.
     pub job_on_start: bool,
     /// Notify when an individual job succeeds.
     pub job_on_success: bool,
     /// Notify when an individual job fails.
     pub job_on_fail: bool,
+    /// Notify when an individual job is canceled. Off by default and noisier than it looks:
+    /// canceling a run flips every in-flight job at once, so one cancel can fire several.
+    pub job_on_cancel: bool,
 }
 
 impl Default for NotificationRules {
     fn default() -> Self {
         // Quiet-ish default: notify on pipeline completion (success/fail), not on every start;
-        // job events are all opt-in to avoid flooding the user with per-job noise.
+        // job events are all opt-in to avoid flooding the user with per-job noise. Cancel is
+        // opt-in too: it usually means the user canceled the run themselves and already knows.
         NotificationRules {
             on_start: false,
             on_success: true,
             on_fail: true,
+            on_cancel: false,
             job_on_start: false,
             job_on_success: false,
             job_on_fail: false,
+            job_on_cancel: false,
         }
     }
 }
@@ -227,7 +236,7 @@ impl NotificationRules {
     /// Whether any job event is enabled. Gates whether the poller fetches per-job status at all:
     /// with no job event on, there is no reason to pay for the extra per-pipeline jobs request.
     pub fn any_job_enabled(&self) -> bool {
-        self.job_on_start || self.job_on_success || self.job_on_fail
+        self.job_on_start || self.job_on_success || self.job_on_fail || self.job_on_cancel
     }
 }
 
@@ -475,14 +484,31 @@ mod tests {
             on_start: true,
             on_success: false,
             on_fail: true,
+            on_cancel: true,
             job_on_start: true,
             job_on_success: false,
             job_on_fail: true,
+            job_on_cancel: true,
         };
         let json = serde_json::to_string(&rules).unwrap();
         assert_eq!(
             serde_json::from_str::<NotificationRules>(&json).unwrap(),
             rules
+        );
+
+        // A config written before the cancel events existed carries neither `on_cancel` nor
+        // `job_on_cancel`. Both fall back to off, so upgrading never starts notifying about a
+        // cancel the user did not ask for.
+        let pre_cancel: NotificationRules = serde_json::from_str(
+            r#"{"on_start":false,"on_success":true,"on_fail":true,"job_on_start":false,"job_on_success":false,"job_on_fail":true}"#,
+        )
+        .unwrap();
+        assert!(!pre_cancel.on_cancel, "pipeline cancel defaults off");
+        assert!(!pre_cancel.job_on_cancel, "job cancel defaults off");
+        assert!(pre_cancel.on_fail, "pre-existing events preserved");
+        assert!(
+            pre_cancel.any_job_enabled(),
+            "pre-existing job_on_fail still enables job polling"
         );
 
         // A config written before this change carried the old detail-level model (`pipeline_level`

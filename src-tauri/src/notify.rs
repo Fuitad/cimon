@@ -16,12 +16,14 @@ pub fn should_notify(rules: &NotificationRules, kind: TransitionKind, is_job: bo
             TransitionKind::Started => rules.job_on_start,
             TransitionKind::Succeeded => rules.job_on_success,
             TransitionKind::Failed => rules.job_on_fail,
+            TransitionKind::Canceled => rules.job_on_cancel,
         }
     } else {
         match kind {
             TransitionKind::Started => rules.on_start,
             TransitionKind::Succeeded => rules.on_success,
             TransitionKind::Failed => rules.on_fail,
+            TransitionKind::Canceled => rules.on_cancel,
         }
     }
 }
@@ -40,6 +42,7 @@ pub fn format_message(
                 TransitionKind::Started => "notify.job_started",
                 TransitionKind::Succeeded => "notify.job_succeeded",
                 TransitionKind::Failed => "notify.job_failed",
+                TransitionKind::Canceled => "notify.job_canceled",
             };
             let title = rust_i18n::t!(
                 key,
@@ -55,6 +58,7 @@ pub fn format_message(
                 TransitionKind::Started => "notify.pipeline_started",
                 TransitionKind::Succeeded => "notify.pipeline_succeeded",
                 TransitionKind::Failed => "notify.pipeline_failed",
+                TransitionKind::Canceled => "notify.pipeline_canceled",
             };
             let title = rust_i18n::t!(key, locale = locale, project = project_name).to_string();
             (title, transition.pipeline.status)
@@ -298,21 +302,19 @@ mod tests {
     use super::*;
     use crate::model::{Job, Pipeline, PipelineStatus};
 
-    fn rules(
-        on_start: bool,
-        on_success: bool,
-        on_fail: bool,
-        job_on_start: bool,
-        job_on_success: bool,
-        job_on_fail: bool,
-    ) -> NotificationRules {
+    /// Every event off. Tests switch on only what they exercise via struct-update syntax
+    /// (`NotificationRules { on_fail: true, ..no_rules() }`), which stays readable as the event
+    /// set grows.
+    fn no_rules() -> NotificationRules {
         NotificationRules {
-            on_start,
-            on_success,
-            on_fail,
-            job_on_start,
-            job_on_success,
-            job_on_fail,
+            on_start: false,
+            on_success: false,
+            on_fail: false,
+            on_cancel: false,
+            job_on_start: false,
+            job_on_success: false,
+            job_on_fail: false,
+            job_on_cancel: false,
         }
     }
 
@@ -358,7 +360,10 @@ mod tests {
     #[test]
     fn should_notify_uses_independent_pipeline_and_job_toggles() {
         // Pipeline failures only; all job events off.
-        let r = rules(false, false, true, false, false, false);
+        let r = NotificationRules {
+            on_fail: true,
+            ..no_rules()
+        };
         assert!(
             should_notify(&r, TransitionKind::Failed, false),
             "pipeline fail enabled"
@@ -373,7 +378,11 @@ mod tests {
         );
 
         // Job events only (start + fail); all pipeline events off. Independent of pipeline toggles.
-        let r = rules(false, false, false, true, false, true);
+        let r = NotificationRules {
+            job_on_start: true,
+            job_on_fail: true,
+            ..no_rules()
+        };
         assert!(
             !should_notify(&r, TransitionKind::Started, false),
             "pipeline start disabled"
@@ -389,6 +398,51 @@ mod tests {
         assert!(
             !should_notify(&r, TransitionKind::Succeeded, true),
             "job success disabled"
+        );
+    }
+
+    #[test]
+    fn should_notify_gates_cancel_on_its_own_toggles() {
+        // Cancel is independent of the other events: fail on, cancel off means a cancel is silent.
+        let fail_only = NotificationRules {
+            on_fail: true,
+            job_on_fail: true,
+            ..no_rules()
+        };
+        assert!(
+            !should_notify(&fail_only, TransitionKind::Canceled, false),
+            "pipeline cancel disabled even though pipeline fail is on"
+        );
+        assert!(
+            !should_notify(&fail_only, TransitionKind::Canceled, true),
+            "job cancel disabled even though job fail is on"
+        );
+
+        // Pipeline cancel on, job cancel off: the two are separate toggles.
+        let pipeline_cancel = NotificationRules {
+            on_cancel: true,
+            ..no_rules()
+        };
+        assert!(
+            should_notify(&pipeline_cancel, TransitionKind::Canceled, false),
+            "pipeline cancel enabled"
+        );
+        assert!(
+            !should_notify(&pipeline_cancel, TransitionKind::Canceled, true),
+            "job cancel still disabled"
+        );
+
+        let job_cancel = NotificationRules {
+            job_on_cancel: true,
+            ..no_rules()
+        };
+        assert!(
+            should_notify(&job_cancel, TransitionKind::Canceled, true),
+            "job cancel enabled"
+        );
+        assert!(
+            !should_notify(&job_cancel, TransitionKind::Canceled, false),
+            "pipeline cancel still disabled"
         );
     }
 
@@ -420,6 +474,26 @@ mod tests {
         // French: "tâche" is feminine, so the past participle agrees ("échouée", not "échoué").
         let (title_fr, _) = format_message(&tr, "web", "fr");
         assert_eq!(title_fr, "web : tâche build échouée");
+    }
+
+    #[test]
+    fn format_message_canceled_transition_en_and_fr() {
+        let pipe = pipeline_tr(TransitionKind::Canceled, PipelineStatus::Canceled);
+        assert_eq!(
+            format_message(&pipe, "web", "en"),
+            ("web: pipeline canceled".into(), "main (canceled)".into())
+        );
+        assert_eq!(
+            format_message(&pipe, "web", "fr"),
+            ("web : pipeline annulé".into(), "main (annulé)".into())
+        );
+
+        // "tâche" is feminine, so the participle agrees ("annulée", not "annulé").
+        let job = job_tr(TransitionKind::Canceled, "build", PipelineStatus::Canceled);
+        let (title_en, _) = format_message(&job, "web", "en");
+        assert_eq!(title_en, "web: job build canceled");
+        let (title_fr, _) = format_message(&job, "web", "fr");
+        assert_eq!(title_fr, "web : tâche build annulée");
     }
 
     #[test]

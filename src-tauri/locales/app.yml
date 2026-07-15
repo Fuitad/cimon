@@ -13,8 +13,11 @@ _version: 2
 "notify.pipeline_failed":
   en: "%{project}: pipeline failed"
   fr: "%{project} : pipeline échoué"
+"notify.pipeline_canceled":
+  en: "%{project}: pipeline canceled"
+  fr: "%{project} : pipeline annulé"
 # Job-level titles. "tâche" (job) is feminine in French, so the participle agrees:
-# démarrée / réussie / échouée (vs the masculine pipeline forms above).
+# démarrée / réussie / échouée / annulée (vs the masculine pipeline forms above).
 "notify.job_started":
   en: "%{project}: job %{job} started"
   fr: "%{project} : tâche %{job} démarrée"
@@ -24,6 +27,9 @@ _version: 2
 "notify.job_failed":
   en: "%{project}: job %{job} failed"
   fr: "%{project} : tâche %{job} échouée"
+"notify.job_canceled":
+  en: "%{project}: job %{job} canceled"
+  fr: "%{project} : tâche %{job} annulée"
 "notify.body":
   en: "%{branch} (%{status})"
   fr: "%{branch} (%{status})"

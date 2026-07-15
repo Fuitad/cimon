@@ -115,6 +115,7 @@ function SettingsSection() {
               updateRules({ on_success: v }),
             )}
             {toggle(t("settings.onFail"), rules.on_fail, (v) => updateRules({ on_fail: v }))}
+            {toggle(t("settings.onCancel"), rules.on_cancel, (v) => updateRules({ on_cancel: v }))}
           </div>
         </div>
 
@@ -129,6 +130,9 @@ function SettingsSection() {
             )}
             {toggle(t("settings.jobOnFail"), rules.job_on_fail, (v) =>
               updateRules({ job_on_fail: v }),
+            )}
+            {toggle(t("settings.jobOnCancel"), rules.job_on_cancel, (v) =>
+              updateRules({ job_on_cancel: v }),
             )}
           </div>
         </div>

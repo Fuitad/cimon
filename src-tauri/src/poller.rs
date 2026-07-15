@@ -56,6 +56,7 @@ pub enum TransitionKind {
     Started,
     Succeeded,
     Failed,
+    Canceled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +110,7 @@ fn transition_for(status: PipelineStatus) -> Option<TransitionKind> {
         PipelineStatus::Running => Some(TransitionKind::Started),
         PipelineStatus::Success => Some(TransitionKind::Succeeded),
         PipelineStatus::Failed => Some(TransitionKind::Failed),
+        PipelineStatus::Canceled => Some(TransitionKind::Canceled),
         _ => None,
     }
 }
@@ -822,6 +824,15 @@ mod tests {
     }
 
     #[test]
+    fn status_change_to_canceled_emits_canceled() {
+        let mut s = PollState::default();
+        s.detect(&key(), &[pipeline(1, PipelineStatus::Running)]); // baseline
+        let out = s.detect(&key(), &[pipeline(1, PipelineStatus::Canceled)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, TransitionKind::Canceled);
+    }
+
+    #[test]
     fn unchanged_status_emits_nothing() {
         let mut s = PollState::default();
         s.detect(&key(), &[pipeline(1, PipelineStatus::Running)]);
@@ -1140,9 +1151,11 @@ mod tests {
                 on_start: true,
                 on_success: true,
                 on_fail: true,
+                on_cancel: true,
                 job_on_start: job_level,
                 job_on_success: job_level,
                 job_on_fail: job_level,
+                job_on_cancel: job_level,
             },
             ..Config::default()
         }

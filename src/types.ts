@@ -32,23 +32,30 @@ export interface NotificationRules {
   on_success: boolean;
   /** Notify when a pipeline fails. */
   on_fail: boolean;
+  /** Notify when a pipeline is canceled. */
+  on_cancel: boolean;
   /** Notify when an individual job starts. */
   job_on_start: boolean;
   /** Notify when an individual job succeeds. */
   job_on_success: boolean;
   /** Notify when an individual job fails. */
   job_on_fail: boolean;
+  /** Notify when an individual job is canceled. */
+  job_on_cancel: boolean;
 }
 
-/** Quiet-ish default: pipeline completion events on, every job event opt-in. Single source of
- * truth shared by the settings UI's initial state and the dev-preview fixture. */
+/** Quiet-ish default: pipeline completion events on, every job event and both cancel events
+ * opt-in. Single source of truth shared by the settings UI's initial state and the dev-preview
+ * fixture. Mirrors the Rust `Default for NotificationRules`. */
 export const DEFAULT_NOTIFICATION_RULES: NotificationRules = {
   on_start: false,
   on_success: true,
   on_fail: true,
+  on_cancel: false,
   job_on_start: false,
   job_on_success: false,
   job_on_fail: false,
+  job_on_cancel: false,
 };
 
 /** Color theme for the app windows. `system` follows the OS appearance. Mirrors Rust `UiMode`. */
