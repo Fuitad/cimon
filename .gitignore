@@ -49,6 +49,7 @@ coverage/
 *.tsbuildinfo
 DESIGN.md
 PRODUCT.md
+ERRORS.md
 
 .impeccable/
 
