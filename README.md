@@ -56,7 +56,7 @@ CIMon is read-only. It monitors and notifies. It does not trigger, re-run, or ca
 
 ## Download and install
 
-Pre-built installers for macOS, Windows, and Linux are published on the [Releases](https://github.com/Fuitad/cimon/releases) page. Download the file for your platform and install it the usual way.
+Pre-built installers for macOS, Windows, and Linux are published on the [Releases](https://github.com/Fuitad/cimon/releases) page. Download the file for your platform and install it the usual way. See the [changelog](CHANGELOG.md) for what changed in each version.
 
 The macOS build is code-signed and notarized by Apple, so it opens normally with no Gatekeeper warning. The Windows build is not yet signed, so Windows shows a one-time warning. Here is what to expect on each platform.
 
