@@ -2,6 +2,12 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.13] (2026-07-16)
+
+### Fixed
+
+* After installing an update on macOS, CIMon now waits for Gatekeeper to approve the replaced app bundle before restarting, preventing the app from closing without reopening.
+
 ## [0.1.12] (2026-07-15)
 
 ### Added
