@@ -2,11 +2,15 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
-## [Unreleased]
+## [0.1.14] (2026-07-23)
 
 ### Fixed
 
 * A pipeline that was Running when CIMon lost the network path to its server no longer keeps the tray icon and the "N running" headline stuck on running for as long as the server stays unreachable (for example, a laptop taken home for the weekend while an office GitLab was mid-pipeline). Once the server has been unreachable for more than five minutes (or twice the poll interval, whichever is longer), the row reads "Offline", the project stops counting as running, and the tray falls back to the worst status of the remaining reachable projects. A last-known Passed or Failed still shows as before, since a settled result stays true while offline, and a commit whose runs already include a failure keeps showing Failed instead of Offline. When the connection returns, CIMon refreshes silently instead of sending a burst of notifications for runs that finished during the outage.
+
+### Security
+
+* Bumped the development-only npm dependency `brace-expansion` to pick up the upstream fix for a ReDoS advisory. The shipped app does not include this package.
 
 ## [0.1.13] (2026-07-16)
 
