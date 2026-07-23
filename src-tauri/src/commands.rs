@@ -400,6 +400,10 @@ pub struct PanelProject {
     /// state from a project whose first poll is still in flight, which also carries `status: None`
     /// and `stale: false` but should keep reading as "checking".
     pub no_pipelines: bool,
+    /// `true` when this project's stale in-flight status has DECAYED (see
+    /// [`ProjectStatusView::offline`]): the server has been unreachable past the decay window, so
+    /// the panel renders the row as "Offline" and counts it offline instead of running.
+    pub offline: bool,
     /// `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
     /// over `stale` in the panel: the row reads "authentication failed", not "offline".
     pub auth_failed: bool,
@@ -713,6 +717,7 @@ fn build_panel_projects(
             updated_at: view.and_then(|v| (!v.updated_at.is_empty()).then(|| v.updated_at.clone())),
             stale: view.is_some_and(|v| v.stale),
             no_pipelines: view.is_some_and(|v| v.no_pipelines),
+            offline: view.is_some_and(|v| v.offline),
             auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
         }
     };
@@ -1690,6 +1695,7 @@ mod tests {
                 updated_at: String::new(),
                 stale: false,
                 no_pipelines: false,
+                offline: false,
                 pipeline_url: "https://github.com/acme/p/actions/runs/55".into(),
             },
         )]);
@@ -1720,6 +1726,7 @@ mod tests {
                 updated_at: String::new(),
                 stale: false,
                 no_pipelines: false,
+                offline: false,
                 pipeline_url: "https://github.com/acme/p/actions/runs/54".into(),
             },
         )]);

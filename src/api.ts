@@ -204,7 +204,7 @@ const GITHUB_FIXTURE_PROJECTS: DiscoveredProject[] = [
 // Panel preview fixtures (dev only). `?preview=empty` -> no monitored projects (the panel's
 // empty/CTA state); `?preview=multi` -> two accounts so the per-account grouping is reviewable;
 // default -> one account with a spread of statuses (success, running, failed, pending, stale,
-// never-polled, no CI) so every row treatment is visible in a plain browser.
+// decayed offline, never-polled, no CI) so every row treatment is visible in a plain browser.
 const ago = (mins: number): string => new Date(Date.now() - mins * 60_000).toISOString();
 const PANEL_FIXTURE: PanelProject[] = [
   {
@@ -220,6 +220,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: ago(4),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -235,6 +236,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: ago(0),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -250,6 +252,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: ago(12),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -265,6 +268,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: ago(1),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -280,6 +284,25 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: ago(180),
     stale: true,
     no_pipelines: false,
+    offline: false,
+    auth_failed: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 48,
+    name: "batch-runner",
+    web_url: "https://gitlab.com/acme/ops/batch-runner",
+    // Decayed offline: last-known Running, but the server has been unreachable past the decay
+    // window -- the row reads "Offline" and must not count as running in the headline.
+    status: "running",
+    branch: "main",
+    updated_at: ago(1_200),
+    stale: true,
+    no_pipelines: false,
+    offline: true,
     auth_failed: false,
   },
   {
@@ -295,6 +318,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: null,
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -312,6 +336,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     updated_at: null,
     stale: false,
     no_pipelines: true,
+    offline: false,
     auth_failed: false,
   },
 ];
@@ -330,6 +355,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     updated_at: ago(7),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
   {
@@ -345,6 +371,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     updated_at: ago(2),
     stale: false,
     no_pipelines: false,
+    offline: false,
     auth_failed: false,
   },
 ];

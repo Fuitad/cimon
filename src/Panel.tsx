@@ -69,6 +69,9 @@ function dotClass(p: PanelProject): string {
 function statusWord(p: PanelProject, t: TFunction): string {
   // A dead token takes precedence over the (now last-known) pipeline status and the offline state.
   if (p.auth_failed) return t("panel.authFailed");
+  // Decayed: the server has been unreachable past the decay window, so a last-known Running is no
+  // longer credible enough to assert -- the row reads "Offline" instead of a stale status word.
+  if (p.offline) return t("panel.offlineStatus");
   if (p.status === null) {
     if (p.stale) return t("panel.unreachable");
     if (p.no_pipelines) return t("panel.noPipelines");
@@ -100,13 +103,17 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   let running = 0;
   let pending = 0;
   let success = 0;
-  let unreachable = 0; // never polled successfully and currently failing -> "can't connect"
+  let unreachable = 0; // can't-connect rows plus decayed offline rows -> "N offline"
   let checking = 0; // not polled yet (first poll in flight)
   let authFailed = 0; // dead token -> not counted by its (last-known) status
   for (const p of projects) {
     if (p.auth_failed) {
       authFailed++;
       continue; // a dead-token row's status is last-known, not a live signal
+    }
+    if (p.offline) {
+      unreachable++;
+      continue; // decayed: a last-known Running from before the outage must not count as running
     }
     switch (p.status) {
       case "failed":
@@ -136,11 +143,11 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   if (failed > 0) return { text: t("panel.summaryFailing", { count: failed }), tone: "danger" };
   if (authFailed > 0)
     return { text: t("panel.summaryAuthFailed", { count: authFailed }), tone: "danger" };
-  // Running outranks unreachable: one project that can't connect must not mask "N running" in the
-  // headline. The offline project is still surfaced per-row (grey dot + "can't connect").
+  // Running outranks offline: one unreachable project must not mask "N running" in the headline.
+  // The offline project is still surfaced per-row (grey dot + "can't connect" / "Offline").
   if (running > 0) return { text: t("panel.summaryRunning", { count: running }), tone: "running" };
   if (unreachable > 0)
-    return { text: t("panel.summaryUnreachable", { count: unreachable }), tone: "muted" };
+    return { text: t("panel.summaryOffline", { count: unreachable }), tone: "muted" };
   if (pending > 0) return { text: t("panel.summaryPending", { count: pending }), tone: "pending" };
   if (checking === total) return { text: t("panel.summaryChecking"), tone: "muted" };
   if (success === total) return { text: t("panel.summaryAllPassing"), tone: "ok" };
@@ -281,7 +288,9 @@ function Panel() {
               {p.branch && <span className="prow__branch mono">{p.branch}</span>}
               <span className="prow__status">
                 {statusWord(p, t)}
-                {p.stale && p.status !== null && !p.auth_failed ? ` · ${t("panel.offline")}` : ""}
+                {p.stale && p.status !== null && !p.auth_failed && !p.offline
+                  ? ` · ${t("panel.offline")}`
+                  : ""}
               </span>
               {rel && <span className="prow__time">{rel}</span>}
             </span>

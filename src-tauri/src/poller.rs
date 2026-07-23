@@ -19,6 +19,19 @@ pub type ProjectKey = (String, u64);
 /// auth/expiry state is retained.
 const TOKEN_HEALTH_MIN_INTERVAL_SECS: i64 = 300;
 
+/// Floor of the offline decay window (seconds). A stale IN-FLIGHT status (Running/Pending) decays
+/// -- stops driving the tray aggregate and the panel's running count -- once the server has been
+/// unreachable (Network-level poll failures) for at least `max(DECAY_MIN_SECS, 2 * poll interval)`
+/// since the last successful poll. The floor rides out a Wi-Fi blip at the default 30s cadence;
+/// the `2 * interval` term scales the window for slow cadences where a single missed tick already
+/// spans minutes. Terminal statuses never decay: a settled result stays credible while offline.
+const DECAY_MIN_SECS: i64 = 300;
+
+/// The offline decay window for a poll cadence (see [`DECAY_MIN_SECS`]).
+fn decay_window(poll_interval_secs: u64) -> i64 {
+    DECAY_MIN_SECS.max(2 * poll_interval_secs as i64)
+}
+
 /// A per-project status view for the popover panel rows. Built from [`PollState`] and handed to the
 /// panel (via a command + a per-tick event) so each monitored project can show a colored indicator
 /// plus its current branch, status word, and a relative "updated N ago" time.
@@ -45,6 +58,12 @@ pub struct ProjectStatusView {
     /// row from the first-poll-still-in-flight case, which both otherwise carry `status: None` +
     /// `stale: false`.
     pub no_pipelines: bool,
+    /// `true` when this project's stale in-flight status has DECAYED: the server has been
+    /// unreachable (Network-level poll failures) for longer than the decay window, so the
+    /// last-known Running/Pending has almost certainly settled and is no longer credible. The
+    /// panel renders the row's status word as "Offline" and counts it offline instead of running;
+    /// the project stops driving the tray aggregate. Always `false` for terminal statuses.
+    pub offline: bool,
     /// The current pipeline's own page (empty when there is none). `open_project_url` opens this
     /// instead of the project's static page while `status` is `Running`, so clicking an in-progress
     /// row lands on the active run rather than the repo's landing page.
@@ -181,6 +200,24 @@ pub struct PollState {
     /// (resilient to transient blips and self-healing on the next good poll), but are flagged so
     /// the tray can mark the row stale instead of showing old data as fresh.
     stale: HashSet<ProjectKey>,
+    /// Epoch seconds of each project's last SUCCESSFUL poll, recorded by `mark_fresh`. Absent until
+    /// a project first polls successfully. The AGE of this timestamp -- not time since the first
+    /// failure -- drives the offline decay, so reopening a laptop after a weekend away decays on
+    /// the FIRST failed poll (the last success is days old) instead of staying wrongly "running"
+    /// through a fresh grace period.
+    last_success: HashMap<ProjectKey, i64>,
+    /// Projects whose stale in-flight claim was invalidated during a network outage (see
+    /// [`PollState::mark_network_stale`]): either decayed to "Offline" (current status still
+    /// in-flight) or degraded to a known Failed floor (current status rewritten to Failed).
+    /// Either way the episode is recorded here so the next successful poll re-baselines
+    /// silently (see [`PollState::mark_fresh`]), and it is that poll that clears the entry.
+    decayed: HashSet<ProjectKey>,
+    /// Projects whose newest commit's run group contains a settled Failed run while other runs
+    /// are still in flight. Such a commit can no longer end better than Failed, so an offline
+    /// decay degrades the project to this known floor instead of hiding the already-observed
+    /// failure behind "Offline" (see [`PollState::mark_network_stale`]). Maintained by `detect`
+    /// from each successful observation.
+    failed_floor: HashSet<ProjectKey>,
     /// Accounts whose `token_health` most recently reported a dead token (HTTP 401 / revoked).
     auth_failed: HashSet<String>,
     /// Last-known token expiry per account (raw provider string); `None` = no expiry / unknown.
@@ -220,10 +257,23 @@ impl PollState {
         // single newest run; an empty list means no current pipeline, so drop any stale entry.
         match aggregate_current(latest) {
             Some(rep) => {
+                // A settled Failed among the newest commit's runs pins that commit's floor (it
+                // can no longer end better than Failed), which an offline decay falls back to
+                // instead of hiding an already-observed failure (see `mark_network_stale`).
+                let has_failed_run = rep.commit_fanout
+                    && latest
+                        .iter()
+                        .any(|p| p.sha == rep.sha && p.status == PipelineStatus::Failed);
+                if has_failed_run {
+                    self.failed_floor.insert(key.clone());
+                } else {
+                    self.failed_floor.remove(key);
+                }
                 self.current.insert(key.clone(), rep);
             }
             None => {
                 self.current.remove(key);
+                self.failed_floor.remove(key);
             }
         }
 
@@ -313,11 +363,17 @@ impl PollState {
     }
 
     /// Worst current status across all monitored projects, or `None` when nothing is tracked.
-    /// Drives the tray icon (Failed outranks Running outranks settled states).
+    /// Drives the tray icon (Failed outranks Running outranks settled states). Projects decayed
+    /// to "Offline" (decayed AND still carrying an in-flight status) are excluded: a Running
+    /// last observed before a long offline gap must not keep the tray blue all weekend. A
+    /// project degraded to its Failed floor carries a terminal status and keeps driving the
+    /// aggregate. With nothing else tracked the aggregate becomes `None`, which the tray
+    /// renders as the idle template glyph.
     pub fn aggregate_status(&self) -> Option<PipelineStatus> {
         self.current
-            .values()
-            .map(|p| p.status)
+            .iter()
+            .filter(|(k, p)| !(self.decayed.contains(*k) && p.status.is_in_flight()))
+            .map(|(_, p)| p.status)
             .max_by_key(|s| s.severity())
     }
 
@@ -342,6 +398,9 @@ impl PollState {
                         updated_at: p.updated_at.clone(),
                         stale: self.stale.contains(k),
                         no_pipelines: false,
+                        // Decayed AND still in-flight -> "Offline". A project degraded to its
+                        // Failed floor carries a terminal status and renders as stale-failed.
+                        offline: self.decayed.contains(k) && p.status.is_in_flight(),
                         pipeline_url: p.web_url.clone(),
                     },
                 )
@@ -356,6 +415,7 @@ impl PollState {
                 updated_at: String::new(),
                 stale: true,
                 no_pipelines: false,
+                offline: false,
                 pipeline_url: String::new(),
             });
         }
@@ -370,6 +430,7 @@ impl PollState {
                 updated_at: String::new(),
                 stale: false,
                 no_pipelines: true,
+                offline: false,
                 pipeline_url: String::new(),
             });
         }
@@ -377,13 +438,59 @@ impl PollState {
     }
 
     /// Flag a project as stale (its most recent poll attempt failed). Its `current` entry is kept.
+    /// For NETWORK-level failures use [`mark_network_stale`](Self::mark_network_stale) instead;
+    /// this plain variant (HTTP errors, auth failures) never decays: the server answered, so the
+    /// "it must have settled by now" inference behind the decay does not hold.
     fn mark_stale(&mut self, key: &ProjectKey) {
         self.stale.insert(key.clone());
     }
 
-    /// Clear a project's stale flag after a successful poll.
-    fn mark_fresh(&mut self, key: &ProjectKey) {
+    /// Flag a project stale after a NETWORK-level poll failure (server unreachable) at `now`,
+    /// additionally DECAYING its last-known in-flight status once the last successful poll is at
+    /// least `window_secs` old: a Running/Pending observed before an outage that long has almost
+    /// certainly settled, so it must stop driving the tray and the running count as if live.
+    /// Terminal statuses are left alone -- a settled result stays credible while offline. Keyed
+    /// on the age of the last SUCCESS (not the first failure), so waking a laptop after a weekend
+    /// decays on the first failed poll while a blip after a recent success rides out the window.
+    fn mark_network_stale(&mut self, key: &ProjectKey, now: i64, window_secs: i64) {
+        self.stale.insert(key.clone());
+        let in_flight = self
+            .current
+            .get(key)
+            .is_some_and(|p| p.status.is_in_flight());
+        let window_elapsed = self
+            .last_success
+            .get(key)
+            .is_some_and(|&t| now - t >= window_secs);
+        if in_flight && window_elapsed {
+            // The in-flight claim is no longer credible. When the newest commit already
+            // contains a settled Failed run (see `failed_floor`), degrade to that known floor
+            // -- stale-terminal treatment, so the observed failure stays red -- instead of
+            // hiding the whole project behind "Offline". A settled Success sibling pins
+            // nothing (the in-flight run could still fail), so without a Failed run the
+            // project decays to "Offline". Either way the episode is recorded in `decayed`
+            // so recovery re-baselines silently.
+            if self.failed_floor.contains(key) {
+                if let Some(p) = self.current.get_mut(key) {
+                    p.status = PipelineStatus::Failed;
+                }
+            }
+            self.decayed.insert(key.clone());
+        }
+    }
+
+    /// Clear a project's stale/decayed flags after a successful poll at `now`, recording the poll
+    /// time (the reference point for the decay window). Recovery FROM A DECAYED episode drops the
+    /// project's seen state so the caller's next `detect`/`detect_jobs` re-baselines silently:
+    /// everything that happened during a decayed-length outage is history, not news, and must not
+    /// land as a burst of days-old notifications.
+    fn mark_fresh(&mut self, key: &ProjectKey, now: i64) {
         self.stale.remove(key);
+        if self.decayed.remove(key) {
+            self.seen.remove(key);
+            self.seen_jobs.remove(key);
+        }
+        self.last_success.insert(key.clone(), now);
     }
 
     /// Decide whether to emit an expiry warning for `account`, given the provider's raw `expires_at`
@@ -449,6 +556,9 @@ impl PollState {
         self.current.retain(|k, _| valid.contains(k));
         self.seen_jobs.retain(|k, _| valid.contains(k));
         self.stale.retain(|k| valid.contains(k));
+        self.last_success.retain(|k, _| valid.contains(k));
+        self.decayed.retain(|k| valid.contains(k));
+        self.failed_floor.retain(|k| valid.contains(k));
         // Token state is account-keyed; keep only accounts that still have a monitored project.
         let accounts: HashSet<&String> = valid.iter().map(|(a, _)| a).collect();
         self.auth_failed.retain(|a| accounts.contains(a));
@@ -471,6 +581,7 @@ pub async fn poll_once(
 ) -> (Vec<Transition>, Vec<TokenEvent>) {
     let mut transitions = Vec::new();
     let mut token_events = Vec::new();
+    let decay_after = decay_window(cfg.poll_interval_secs);
     for acct in &cfg.accounts {
         // Nothing to poll for this account: skip it WITHOUT reading the keychain. Otherwise we
         // would request token access every tick for an account with no monitored projects, which
@@ -597,16 +708,24 @@ pub async fn poll_once(
                 .await
             {
                 Ok(p) => p,
-                Err(_) => {
+                Err(e) => {
                     // Error isolation: skip this project this tick. Flag it stale so the tray
                     // marks its retained last-known status as no longer fresh, instead of
-                    // showing it as current.
-                    state.mark_stale(&key);
+                    // showing it as current. A NETWORK failure (server unreachable) additionally
+                    // arms the offline decay; an HTTP-level failure means the server answered,
+                    // so the last-known status only goes stale, as before.
+                    match e {
+                        ProviderError::Network(_) => {
+                            state.mark_network_stale(&key, now, decay_after)
+                        }
+                        _ => state.mark_stale(&key),
+                    }
                     continue;
                 }
             };
-            // A successful fetch: this project's status is fresh again.
-            state.mark_fresh(&key);
+            // A successful fetch: this project's status is fresh again (recovery from a decayed
+            // offline episode also drops seen state here, so `detect` below re-baselines silently).
+            state.mark_fresh(&key, now);
             let mut detected = state.detect(&key, &pipelines);
 
             // Job-level: fetch jobs only for the newest commit's pipeline (greatest id, not list
@@ -1378,6 +1497,250 @@ mod tests {
         assert!(
             !recovered.get(&key).unwrap().stale,
             "a successful poll clears stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_outage_decays_stale_running_and_recovery_rebaselines_silently() {
+        // The left-the-office scenario: a pipeline is Running when the laptop loses the route to
+        // the server (Network-level poll failures). The last-known Running must stop driving the
+        // tray aggregate once the outage exceeds the decay window (it has almost certainly settled
+        // by then), and the first successful poll after such an outage must re-baseline silently
+        // instead of firing notifications for days-old outcomes.
+        let live_running = MockServer::start().await;
+        mount_gl_project(&live_running, 1, "main").await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/1/pipelines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": 10, "status": "running", "ref": "main", "sha": "a", "web_url": "http://x/10", "updated_at": "t"}
+            ])))
+            .mount(&live_running)
+            .await;
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acct", "tok").unwrap();
+
+        let mut state = PollState::default();
+        // Baseline while reachable: the running pipeline drives the aggregate.
+        let cfg_live = stale_cfg(&live_running.uri());
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_live, 1_000).await;
+        assert_eq!(state.aggregate_status(), Some(PipelineStatus::Running));
+
+        // Connection refused (server unreachable), but still within the decay window
+        // (default interval 30s -> window max(300, 60) = 300s): last-known Running holds,
+        // so a transient blip never flickers the tray.
+        let cfg_dead = stale_cfg("http://127.0.0.1:1");
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead, 1_100).await;
+        assert_eq!(
+            state.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "within the grace window the last-known Running still drives the aggregate"
+        );
+
+        // Still unreachable past the window: the stale Running is no longer credible and must
+        // stop driving the aggregate (tray falls back to idle with nothing else tracked).
+        poll_once(&mut state, &build_http_client(), &tokens, &cfg_dead, 1_400).await;
+        assert_eq!(
+            state.aggregate_status(),
+            None,
+            "a decayed stale Running must not keep the tray blue"
+        );
+
+        // Server reachable again; the pipeline settled during the outage. Recovery after a
+        // decayed-length gap re-baselines silently: no Succeeded toast for old history.
+        let live_settled = MockServer::start().await;
+        mount_gl_project(&live_settled, 1, "main").await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/1/pipelines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": 10, "status": "success", "ref": "main", "sha": "a", "web_url": "http://x/10", "updated_at": "t"}
+            ])))
+            .mount(&live_settled)
+            .await;
+        let cfg_recovered = stale_cfg(&live_settled.uri());
+        let (transitions, _) = poll_once(
+            &mut state,
+            &build_http_client(),
+            &tokens,
+            &cfg_recovered,
+            1_500,
+        )
+        .await;
+        assert!(
+            transitions.is_empty(),
+            "recovery after a decayed outage seeds without notifying"
+        );
+        assert_eq!(state.aggregate_status(), Some(PipelineStatus::Success));
+    }
+
+    #[test]
+    fn stale_terminal_status_never_decays() {
+        // A settled Failed observed before the outage stays credible (and red) no matter how
+        // long the server is unreachable: only in-flight statuses decay.
+        let mut s = PollState::default();
+        s.mark_fresh(&key(), 1_000);
+        s.detect(&key(), &[pipeline(1, PipelineStatus::Failed)]);
+        s.mark_network_stale(&key(), 100_000, 300);
+        assert_eq!(s.aggregate_status(), Some(PipelineStatus::Failed));
+        let view = s.project_statuses().remove(&key()).unwrap();
+        assert!(view.stale);
+        assert!(!view.offline, "a terminal status must never decay");
+    }
+
+    #[test]
+    fn decayed_running_row_reads_offline_keeping_last_known_details() {
+        // The decayed row keeps its last-known context (status, branch, timestamp) for the
+        // panel -- only the `offline` flag flips, so the row can render "Offline" with the
+        // branch and relative time intact.
+        let mut s = PollState::default();
+        s.mark_fresh(&key(), 1_000);
+        s.detect(&key(), &[pipeline(1, PipelineStatus::Running)]);
+        s.mark_network_stale(&key(), 1_400, 300);
+        let view = s.project_statuses().remove(&key()).unwrap();
+        assert!(view.offline);
+        assert!(view.stale);
+        assert_eq!(
+            view.status,
+            Some(PipelineStatus::Running),
+            "last-known status is retained for the row, not blanked"
+        );
+        assert_eq!(view.branch, "main");
+    }
+
+    #[tokio::test]
+    async fn http_level_failure_does_not_decay_a_stale_running() {
+        // Server alive but erroring (HTTP-level failure, e.g. a maintenance 5xx or this 404):
+        // the decay inference ("unreachable long enough that the run must have settled") does
+        // not apply -- the last-known Running only goes stale, exactly as before.
+        let live = MockServer::start().await;
+        mount_gl_project(&live, 1, "main").await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/1/pipelines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": 10, "status": "running", "ref": "main", "sha": "a", "web_url": "http://x/10", "updated_at": "t"}
+            ])))
+            .mount(&live)
+            .await;
+        let tokens = MemoryTokenStore::new();
+        tokens.store("acct", "tok").unwrap();
+        let key = ("acct".to_string(), 1u64);
+
+        let mut state = PollState::default();
+        poll_once(
+            &mut state,
+            &build_http_client(),
+            &tokens,
+            &stale_cfg(&live.uri()),
+            1_000,
+        )
+        .await;
+
+        // A reachable server with nothing mounted: every request 404s (an Http error), far
+        // past the decay window.
+        let erroring = MockServer::start().await;
+        poll_once(
+            &mut state,
+            &build_http_client(),
+            &tokens,
+            &stale_cfg(&erroring.uri()),
+            100_000,
+        )
+        .await;
+        assert_eq!(
+            state.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "an HTTP-level failure must not decay the last-known Running"
+        );
+        let snap = state.project_statuses();
+        let view = snap.get(&key).unwrap();
+        assert!(view.stale);
+        assert!(!view.offline);
+    }
+
+    #[test]
+    fn decay_with_failed_fanout_sibling_degrades_to_failed_floor() {
+        // A GitHub push fanned out into a settled Failed run and a still-Running sibling when
+        // the outage began. The commit can no longer end better than Failed, so the decay must
+        // degrade the project to that known floor (stale-terminal treatment) instead of hiding
+        // the already-observed failure behind "Offline" -- a known failure stays red.
+        let mut s = PollState::default();
+        s.mark_fresh(&key(), 1_000);
+        let mut failed = pipeline(2, PipelineStatus::Failed);
+        failed.sha = "sharedsha".into();
+        let mut running = pipeline(3, PipelineStatus::Running);
+        running.sha = "sharedsha".into();
+        s.detect(&key(), &[running, failed]);
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Running),
+            "while reachable the in-flight sibling keeps the commit Running"
+        );
+
+        s.mark_network_stale(&key(), 1_400, 300);
+        assert_eq!(
+            s.aggregate_status(),
+            Some(PipelineStatus::Failed),
+            "the decayed project degrades to its known Failed floor, not to Offline"
+        );
+        let view = s.project_statuses().remove(&key()).unwrap();
+        assert_eq!(view.status, Some(PipelineStatus::Failed));
+        assert!(view.stale);
+        assert!(
+            !view.offline,
+            "a floor-degraded row is stale-failed, not Offline"
+        );
+
+        // Recovery after the degraded episode re-baselines silently, like any decayed episode.
+        s.mark_fresh(&key(), 1_500);
+        let mut settled_ci = pipeline(3, PipelineStatus::Success);
+        settled_ci.sha = "sharedsha".into();
+        let mut settled_failed = pipeline(2, PipelineStatus::Failed);
+        settled_failed.sha = "sharedsha".into();
+        let out = s.detect(&key(), &[settled_ci, settled_failed]);
+        assert!(
+            out.is_empty(),
+            "outcomes from a degraded outage are history, not news"
+        );
+    }
+
+    #[test]
+    fn decay_with_only_success_sibling_still_goes_offline() {
+        // A settled Success sibling pins nothing: the still-running sibling could yet fail, so
+        // the commit's outcome is genuinely unknown and the project decays to "Offline" --
+        // asserting "Passed" would be the same class of stale claim the decay exists to stop.
+        let mut s = PollState::default();
+        s.mark_fresh(&key(), 1_000);
+        let mut passed = pipeline(2, PipelineStatus::Success);
+        passed.sha = "sharedsha".into();
+        let mut running = pipeline(3, PipelineStatus::Running);
+        running.sha = "sharedsha".into();
+        s.detect(&key(), &[running, passed]);
+
+        s.mark_network_stale(&key(), 1_400, 300);
+        assert_eq!(
+            s.aggregate_status(),
+            None,
+            "no settled failure -> nothing credible to assert; the project goes Offline"
+        );
+        let view = s.project_statuses().remove(&key()).unwrap();
+        assert!(view.offline);
+    }
+
+    #[test]
+    fn recovery_after_decay_rebaselines_jobs_too() {
+        // Job-level seen state must re-baseline alongside the pipelines after a decayed
+        // outage, so job transitions from the offline gap don't fire either.
+        let mut s = PollState::default();
+        s.mark_fresh(&key(), 1_000);
+        let p = pipeline(1, PipelineStatus::Running);
+        s.detect(&key(), std::slice::from_ref(&p));
+        s.detect_jobs(&key(), &p, &[job(1, PipelineStatus::Running)]);
+        s.mark_network_stale(&key(), 1_400, 300);
+        // Recovery: the job settled during the outage; the re-baseline must swallow it.
+        s.mark_fresh(&key(), 1_500);
+        let out = s.detect_jobs(&key(), &p, &[job(1, PipelineStatus::Success)]);
+        assert!(
+            out.is_empty(),
+            "job outcomes from a decayed outage are history, not news"
         );
     }
 

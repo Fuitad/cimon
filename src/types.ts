@@ -110,6 +110,10 @@ export interface PanelProject {
   updated_at: string | null;
   /** `true` when the most recent poll failed: status/branch are last-known, shown as offline. */
   stale: boolean;
+  /** `true` when a stale in-flight status has DECAYED: the server has been unreachable for longer
+   *  than the decay window, so the last-known Running/Pending is no longer credible. The row reads
+   *  "Offline" and the project counts as offline in the headline instead of running. */
+  offline: boolean;
   /** `true` when this project has completed at least one successful poll but currently has no
    *  pipeline at all (no CI configured, or CI that has never run). Distinguishes that settled state
    *  from a project whose first poll is still in flight, which also has `status: null` and

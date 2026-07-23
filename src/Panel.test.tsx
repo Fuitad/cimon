@@ -49,6 +49,7 @@ const row = (over: Partial<PanelProject>): PanelProject => ({
   branch: "main",
   updated_at: null,
   stale: false,
+  offline: false,
   no_pipelines: false,
   auth_failed: false,
   ...over,
@@ -128,7 +129,21 @@ describe("Panel", () => {
     renderWithI18n(<Panel />);
 
     expect(await screen.findByText("panel.summaryRunning")).toBeInTheDocument();
-    expect(screen.queryByText("panel.summaryUnreachable")).toBeNull();
+    expect(screen.queryByText("panel.summaryOffline")).toBeNull();
+  });
+
+  it("shows a decayed offline row as Offline and headlines it as offline, not running", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([
+      // Last-known Running, but the server has been unreachable past the decay window: the row
+      // must read "Offline" (not a 20h-old "Running") and the headline must not count it running.
+      row({ project_id: 1, name: "api", status: "running", stale: true, offline: true }),
+    ]);
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.offlineStatus")).toBeInTheDocument();
+    expect(screen.getByText("panel.summaryOffline")).toBeInTheDocument();
+    expect(screen.queryByText("panel.summaryRunning")).toBeNull();
+    expect(screen.queryByText("status.running")).toBeNull();
   });
 
   it("shows a settled 'no CI' row distinct from a still-checking row", async () => {
