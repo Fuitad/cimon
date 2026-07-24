@@ -2,6 +2,12 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.15] (2026-07-24)
+
+### Added
+
+* Status is no longer carried by color alone. The menu bar icon's center now changes shape by status as well as color: a solid dot for a passing pipeline, a hollow ring for pending, a spinning open ring for running, and a dot with a diagonal cut for a failure. In the popover, the small status dot next to each project is now a small icon instead of a plain colored circle: a checkmark, a spinner, a clock, or an X, plus a distinct icon for a server that has gone unreachable and another for an account whose access token has stopped working. This makes status readable for colorblind users, and in a grayscale screenshot, with nothing to turn on.
+
 ## [0.1.14] (2026-07-23)
 
 ### Fixed
