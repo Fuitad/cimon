@@ -73,24 +73,24 @@ body {
   color: var(--ink-muted);
   white-space: nowrap;
 }
-.panel__summary-dot {
-  width: 7px;
-  height: 7px;
+.panel__summary-icon {
+  width: 12px;
+  height: 12px;
   flex: none;
-  border-radius: 50%;
-  background: var(--ink-faint);
+  color: var(--ink-faint);
 }
-.panel__summary-dot--ok {
-  background: var(--status-ok);
+.panel__summary-icon--ok {
+  color: var(--status-ok);
 }
-.panel__summary-dot--running {
-  background: var(--status-running);
+.panel__summary-icon--running {
+  color: var(--status-running);
+  animation: cimon-spin 1.2s linear infinite;
 }
-.panel__summary-dot--pending {
-  background: var(--status-pending);
+.panel__summary-icon--pending {
+  color: var(--status-pending);
 }
-.panel__summary-dot--danger {
-  background: var(--danger);
+.panel__summary-icon--danger {
+  color: var(--danger);
 }
 
 /* ---- Body / list --------------------------------------------------------------------------- */
@@ -230,46 +230,39 @@ body {
   background: color-mix(in oklch, var(--danger) 12%, transparent);
 }
 
-.prow__dot {
-  width: 9px;
-  height: 9px;
+.prow__status-icon {
+  width: 15px;
+  height: 15px;
   flex: none;
-  border-radius: 50%;
-  background: var(--ink-faint);
+  color: var(--ink-faint);
 }
-.prow__dot--success {
-  background: var(--status-ok);
+.prow__status-icon--success {
+  color: var(--status-ok);
 }
-.prow__dot--running {
-  background: var(--status-running);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--status-running) 22%, transparent);
-  animation: cimon-pulse 1.6s var(--ease-out) infinite;
+.prow__status-icon--running {
+  color: var(--status-running);
+  animation: cimon-spin 1.2s linear infinite;
 }
-.prow__dot--pending {
-  background: var(--status-pending);
+.prow__status-icon--pending {
+  color: var(--status-pending);
 }
-.prow__dot--failed {
-  background: var(--danger);
+.prow__status-icon--failed {
+  color: var(--danger);
 }
-.prow__dot--unknown,
-.prow__dot--stale {
-  background: var(--ink-faint);
+.prow__status-icon--unknown,
+.prow__status-icon--stale {
+  color: var(--ink-faint);
 }
-/* Dead token (expired/revoked/invalid): a danger dot with a halo, distinct from both the plain
-   "failed" pipeline dot and the muted grey offline dot. The "token invalid" word carries the
-   precise meaning, so state is never conveyed by color alone. */
-.prow__dot--auth-failed {
-  background: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 22%, transparent);
+/* Dead token (expired/revoked/invalid): a lock icon, distinct in shape (not just color) from both
+   the "x" of a failed pipeline and the muted signal-slash of an offline server. The "token
+   invalid" word still carries the precise meaning. */
+.prow__status-icon--auth-failed {
+  color: var(--danger);
 }
 
-@keyframes cimon-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
+@keyframes cimon-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -411,8 +404,8 @@ body {
   .panel {
     border: 1px solid CanvasText;
   }
-  .prow__dot {
-    background: CanvasText;
+  .prow__status-icon {
+    color: CanvasText;
   }
   .prow:focus-visible,
   .pbtn:focus-visible,
@@ -425,7 +418,8 @@ body {
 
 /* ---- Reduced motion ------------------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
-  .prow__dot--running {
+  .prow__status-icon--running,
+  .panel__summary-icon--running {
     animation: none;
   }
 }

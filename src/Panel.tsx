@@ -16,6 +16,15 @@ import {
 import { applyUiMode } from "./theme";
 import { useUpdateState } from "./useUpdateState";
 import type { AppInfo, PanelProject } from "./types";
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  LockClosedIcon,
+  MinusCircleIcon,
+  SignalSlashIcon,
+  XCircleIcon,
+} from "./icons";
 import "./Panel.css";
 
 /** Window chrome to add to the measured card height: 1px top + 1px bottom card border, plus the
@@ -27,6 +36,30 @@ interface Summary {
   text: string;
   tone: SummaryTone;
 }
+
+type DotClass = "auth-failed" | "stale" | "running" | "success" | "failed" | "pending" | "unknown";
+
+/** Per-row status icon: shape (not just color) carries the state, so it reads the same to a
+ *  colorblind viewer or in a grayscale screenshot. The status word is still the precise source
+ *  of truth; this is a faster at-a-glance cue on top of it. */
+const STATUS_ICONS: Record<DotClass, typeof CheckCircleIcon> = {
+  "auth-failed": LockClosedIcon,
+  stale: SignalSlashIcon,
+  running: ArrowPathIcon,
+  success: CheckCircleIcon,
+  failed: XCircleIcon,
+  pending: ClockIcon,
+  unknown: MinusCircleIcon,
+};
+
+/** Header summary icon, keyed by the same tone the summary dot used to carry as color alone. */
+const SUMMARY_ICONS: Record<SummaryTone, typeof CheckCircleIcon> = {
+  ok: CheckCircleIcon,
+  running: ArrowPathIcon,
+  pending: ClockIcon,
+  danger: XCircleIcon,
+  muted: MinusCircleIcon,
+};
 
 /** Host of an instance URL, for a group title when the account has no user-given label. */
 function hostOf(url: string): string {
@@ -43,9 +76,9 @@ function groupTitle(p: PanelProject): string {
   return hostOf(p.base_url) || (p.provider === "github" ? "GitHub" : "GitLab");
 }
 
-/** Status dot modifier. Stale (offline) and never-polled both read as neutral grey; the status
- *  word carries the precise state so status is never conveyed by color alone. */
-function dotClass(p: PanelProject): string {
+/** Status icon modifier. The status word next to it still carries the precise state, so the icon
+ *  is a faster at-a-glance cue on top of it, not the sole source of truth. */
+function dotClass(p: PanelProject): DotClass {
   if (p.auth_failed) return "auth-failed"; // dead token: distinct from offline/stale
   if (p.stale) return "stale";
   switch (p.status) {
@@ -152,6 +185,20 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
   if (checking === total) return { text: t("panel.summaryChecking"), tone: "muted" };
   if (success === total) return { text: t("panel.summaryAllPassing"), tone: "ok" };
   return { text: t("panel.summaryProjects", { count: total }), tone: "muted" };
+}
+
+/** Header summary badge: icon (shape, not just color) plus the aggregate status text. */
+function SummaryBadge({ summary }: { summary: Summary }) {
+  const Icon = SUMMARY_ICONS[summary.tone];
+  return (
+    <span className="panel__summary">
+      <Icon
+        className={`panel__summary-icon panel__summary-icon--${summary.tone}`}
+        aria-hidden="true"
+      />
+      {summary.text}
+    </span>
+  );
 }
 
 /** Version plus the short commit SHA the running binary was built from (e.g. "v0.1.0 · abcdef1"),
@@ -273,6 +320,8 @@ function Panel() {
     const rel = relativeTime(p.updated_at, now, t);
     // A dead-token row keeps its last-known status but must not read as a live pipeline failure.
     const failed = p.status === "failed" && !p.stale && !p.auth_failed;
+    const cls = dotClass(p);
+    const StatusIcon = STATUS_ICONS[cls];
     return (
       <li key={`${p.account_id}:${p.project_id}`}>
         <button
@@ -281,7 +330,10 @@ function Panel() {
           title={p.name}
           onClick={() => void openProjectUrl(p.account_id, p.project_id)}
         >
-          <span className={`prow__dot prow__dot--${dotClass(p)}`} aria-hidden="true" />
+          <StatusIcon
+            className={`prow__status-icon prow__status-icon--${cls}`}
+            aria-hidden="true"
+          />
           <span className="prow__main">
             <span className="prow__name">{p.name}</span>
             <span className="prow__meta">
@@ -360,12 +412,7 @@ function Panel() {
             <img src="/cimon.svg" alt="" width={18} height={18} />
             {t("app.name")}
           </span>
-          {summary && (
-            <span className="panel__summary">
-              <span className={`panel__summary-dot panel__summary-dot--${summary.tone}`} />
-              {summary.text}
-            </span>
-          )}
+          {summary && <SummaryBadge summary={summary} />}
         </header>
 
         <div className="panel__body">
