@@ -68,6 +68,10 @@ pub struct ProjectStatusView {
     /// instead of the project's static page while `status` is `Running`, so clicking an in-progress
     /// row lands on the active run rather than the repo's landing page.
     pub pipeline_url: String,
+    /// The current pipeline's id, or `None` when this project has no current pipeline (never
+    /// polled successfully, or polled successfully but has no CI at all). Lets the application
+    /// layer tell whether a persisted `clear_failure` dismissal still matches the live pipeline.
+    pub pipeline_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +406,7 @@ impl PollState {
                         // Failed floor carries a terminal status and renders as stale-failed.
                         offline: self.decayed.contains(k) && p.status.is_in_flight(),
                         pipeline_url: p.web_url.clone(),
+                        pipeline_id: Some(p.id),
                     },
                 )
             })
@@ -417,6 +422,7 @@ impl PollState {
                 no_pipelines: false,
                 offline: false,
                 pipeline_url: String::new(),
+                pipeline_id: None,
             });
         }
         // Projects that HAVE completed at least one successful poll (tracked in `seen`, populated
@@ -432,6 +438,7 @@ impl PollState {
                 no_pipelines: true,
                 offline: false,
                 pipeline_url: String::new(),
+                pipeline_id: None,
             });
         }
         out
@@ -1400,6 +1407,25 @@ mod tests {
             .expect("project b present in snapshot");
         assert_eq!(b.status, Some(PipelineStatus::Failed));
         assert_eq!(b.branch, "develop", "branch is tracked per project");
+    }
+
+    #[test]
+    fn project_statuses_reports_pipeline_id_for_live_project_and_none_for_synthetic_rows() {
+        let mut s = PollState::default();
+        s.detect(&("acct".into(), 10), &[pipeline(7, PipelineStatus::Failed)]);
+        s.mark_stale(&("acct".into(), 20)); // never-succeeded, synthetic "can't connect" row
+
+        let snap = s.project_statuses();
+        assert_eq!(
+            snap.get(&("acct".to_string(), 10)).unwrap().pipeline_id,
+            Some(7),
+            "a tracked project reports its current pipeline id"
+        );
+        assert_eq!(
+            snap.get(&("acct".to_string(), 20)).unwrap().pipeline_id,
+            None,
+            "a never-succeeded stale project has no current pipeline id"
+        );
     }
 
     #[tokio::test]

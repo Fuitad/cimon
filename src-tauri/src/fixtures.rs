@@ -433,6 +433,7 @@ fn config_with(accounts: Vec<Account>, monitored: Vec<MonitoredProject>) -> Conf
         // Pretend the menu-bar notice was already shown so a fixtures run never fires it.
         menu_bar_notice_shown: true,
         dismissed_update_version: None,
+        dismissed_failures: Vec::new(),
     }
 }
 
@@ -503,6 +504,7 @@ fn view(
         no_pipelines: false,
         offline: false,
         pipeline_url: String::new(),
+        pipeline_id: None,
     }
 }
 

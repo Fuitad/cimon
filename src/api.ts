@@ -222,6 +222,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -238,6 +239,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -254,6 +256,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -270,6 +273,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -286,6 +290,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -304,6 +309,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: true,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -320,6 +326,7 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "acc-1",
@@ -338,6 +345,26 @@ const PANEL_FIXTURE: PanelProject[] = [
     no_pipelines: true,
     offline: false,
     auth_failed: false,
+    dismissed: false,
+  },
+  {
+    account_id: "acc-1",
+    account_label: "Work GitLab",
+    provider: "gitlab",
+    base_url: "https://gitlab.com",
+    project_id: 49,
+    name: "billing-worker",
+    web_url: "https://gitlab.com/acme/backend/billing-worker",
+    // Its current pipeline failed but the user already dismissed it: green dot, "Cleared" word, no
+    // Clear button.
+    status: "failed",
+    branch: "main",
+    updated_at: ago(20),
+    stale: false,
+    no_pipelines: false,
+    offline: false,
+    auth_failed: false,
+    dismissed: true,
   },
 ];
 const PANEL_MULTI_FIXTURE: PanelProject[] = [
@@ -357,6 +384,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
   {
     account_id: "gh-1",
@@ -373,6 +401,7 @@ const PANEL_MULTI_FIXTURE: PanelProject[] = [
     no_pipelines: false,
     offline: false,
     auth_failed: false,
+    dismissed: false,
   },
 ];
 
@@ -488,6 +517,9 @@ export const getProjectStatuses = (): Promise<PanelProject[]> => {
 
 export const openProjectUrl = (accountId: string, projectId: number): Promise<void> =>
   PREVIEW ? Promise.resolve() : invoke("open_project_url", { accountId, projectId });
+
+export const clearFailure = (accountId: string, projectId: number): Promise<void> =>
+  PREVIEW ? Promise.resolve() : invoke("clear_failure", { accountId, projectId });
 
 export const appInfo = (): Promise<AppInfo> =>
   PREVIEW ? Promise.resolve({ version: "dev", commit: "abcdef1" }) : invoke("app_info");

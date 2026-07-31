@@ -122,6 +122,9 @@ export interface PanelProject {
   /** `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
    *  over `stale`: the row reads "authentication failed", not "offline". */
   auth_failed: boolean;
+  /** `true` when the user dismissed this project's current failure via the Clear action; the row
+   *  reads "Cleared" instead of "Failed" until a new pipeline run supersedes it. */
+  dismissed: boolean;
 }
 
 /** Per-account token health for the settings UI. Mirrors the Rust `AccountTokenHealth` DTO returned

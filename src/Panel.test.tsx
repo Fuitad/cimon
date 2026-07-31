@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import {
   appInfo,
+  clearFailure,
   dismissUpdate,
   getConfig,
   getProjectStatuses,
@@ -22,6 +23,7 @@ import Panel from "./Panel";
 
 vi.mock("./api", () => ({
   appInfo: vi.fn(),
+  clearFailure: vi.fn(),
   dismissUpdate: vi.fn(),
   getConfig: vi.fn(),
   getProjectStatuses: vi.fn(),
@@ -52,6 +54,7 @@ const row = (over: Partial<PanelProject>): PanelProject => ({
   offline: false,
   no_pipelines: false,
   auth_failed: false,
+  dismissed: false,
   ...over,
 });
 
@@ -101,6 +104,7 @@ beforeEach(() => {
   vi.mocked(installUpdate).mockResolvedValue(updateState({ status: "installed" }));
   vi.mocked(dismissUpdate).mockResolvedValue(updateState());
   vi.mocked(openUpdateRelease).mockResolvedValue(undefined);
+  vi.mocked(clearFailure).mockResolvedValue(undefined);
   vi.mocked(listen).mockResolvedValue(() => {});
 });
 
@@ -194,6 +198,34 @@ describe("Panel", () => {
     await user().click(await screen.findByRole("button", { name: /web-app/ }));
 
     expect(openProjectUrl).toHaveBeenCalledWith("acc-1", 1);
+  });
+
+  it("clears a failed project's status when its Clear action is clicked", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([row({ status: "failed" })]);
+    renderWithI18n(<Panel />);
+    await screen.findByRole("button", { name: /web-app/ });
+
+    await user().click(screen.getByRole("button", { name: "panel.clear" }));
+
+    expect(clearFailure).toHaveBeenCalledWith("acc-1", 1);
+  });
+
+  it("does not show a Clear action on an already-dismissed row", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([row({ status: "failed", dismissed: true })]);
+    renderWithI18n(<Panel />);
+    await screen.findByRole("button", { name: /web-app/ });
+
+    expect(screen.queryByRole("button", { name: "panel.clear" })).not.toBeInTheDocument();
+  });
+
+  it("shows Cleared, not a stale state, for a dismissed row that is also stale", async () => {
+    vi.mocked(getProjectStatuses).mockResolvedValue([
+      row({ status: "failed", dismissed: true, stale: true }),
+    ]);
+    renderWithI18n(<Panel />);
+
+    expect(await screen.findByText("panel.cleared")).toBeInTheDocument();
+    expect(screen.queryByText("panel.offline")).not.toBeInTheDocument();
   });
 
   it("invokes the footer settings and quit actions", async () => {

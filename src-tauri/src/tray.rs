@@ -319,6 +319,14 @@ pub fn refresh(app: &AppHandle) {
     }
 }
 
+/// Look up the live tray by id and set its icon to `status` now, bypassing the next poll tick.
+/// Called from `clear_failure` so the icon reflects a dismissal immediately.
+pub fn refresh_status(app: &AppHandle, status: Option<PipelineStatus>) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        set_status(&tray, status);
+    }
+}
+
 fn show_settings(app: &AppHandle) {
     // Show + focus the window and reveal the dock icon (window visibility drives dock visibility).
     crate::window::show_main(app);

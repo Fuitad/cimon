@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import {
   appInfo,
+  clearFailure,
   getConfig,
   getProjectStatuses,
   hidePanel,
@@ -37,13 +38,22 @@ interface Summary {
   tone: SummaryTone;
 }
 
-type DotClass = "auth-failed" | "stale" | "running" | "success" | "failed" | "pending" | "unknown";
+type DotClass =
+  | "auth-failed"
+  | "dismissed"
+  | "stale"
+  | "running"
+  | "success"
+  | "failed"
+  | "pending"
+  | "unknown";
 
 /** Per-row status icon: shape (not just color) carries the state, so it reads the same to a
  *  colorblind viewer or in a grayscale screenshot. The status word is still the precise source
  *  of truth; this is a faster at-a-glance cue on top of it. */
 const STATUS_ICONS: Record<DotClass, typeof CheckCircleIcon> = {
   "auth-failed": LockClosedIcon,
+  dismissed: CheckCircleIcon,
   stale: SignalSlashIcon,
   running: ArrowPathIcon,
   success: CheckCircleIcon,
@@ -80,6 +90,7 @@ function groupTitle(p: PanelProject): string {
  *  is a faster at-a-glance cue on top of it, not the sole source of truth. */
 function dotClass(p: PanelProject): DotClass {
   if (p.auth_failed) return "auth-failed"; // dead token: distinct from offline/stale
+  if (p.dismissed) return "dismissed"; // outranks stale: the tray excludes it purely by pipeline id
   if (p.stale) return "stale";
   switch (p.status) {
     case "running":
@@ -102,6 +113,9 @@ function dotClass(p: PanelProject): DotClass {
 function statusWord(p: PanelProject, t: TFunction): string {
   // A dead token takes precedence over the (now last-known) pipeline status and the offline state.
   if (p.auth_failed) return t("panel.authFailed");
+  // Dismissed outranks stale/offline: the tray already excludes this row by pipeline id, so the row
+  // must not contradict it with a "can't connect"/"Offline" word.
+  if (p.dismissed) return t("panel.cleared");
   // Decayed: the server has been unreachable past the decay window, so a last-known Running is no
   // longer credible enough to assert -- the row reads "Offline" instead of a stale status word.
   if (p.offline) return t("panel.offlineStatus");
@@ -148,6 +162,7 @@ function summarize(projects: PanelProject[], t: TFunction): Summary | null {
       unreachable++;
       continue; // decayed: a last-known Running from before the outage must not count as running
     }
+    if (p.dismissed) continue; // excluded from the tray/summary by pipeline id; not a live signal
     switch (p.status) {
       case "failed":
         failed++;
@@ -319,11 +334,11 @@ function Panel() {
   const renderRow = (p: PanelProject) => {
     const rel = relativeTime(p.updated_at, now, t);
     // A dead-token row keeps its last-known status but must not read as a live pipeline failure.
-    const failed = p.status === "failed" && !p.stale && !p.auth_failed;
+    const failed = p.status === "failed" && !p.stale && !p.auth_failed && !p.dismissed;
     const cls = dotClass(p);
     const StatusIcon = STATUS_ICONS[cls];
     return (
-      <li key={`${p.account_id}:${p.project_id}`}>
+      <li key={`${p.account_id}:${p.project_id}`} className="prow-item">
         <button
           type="button"
           className={`prow${failed ? " prow--failed" : ""}`}
@@ -340,7 +355,7 @@ function Panel() {
               {p.branch && <span className="prow__branch mono">{p.branch}</span>}
               <span className="prow__status">
                 {statusWord(p, t)}
-                {p.stale && p.status !== null && !p.auth_failed && !p.offline
+                {p.stale && p.status !== null && !p.auth_failed && !p.offline && !p.dismissed
                   ? ` · ${t("panel.offline")}`
                   : ""}
               </span>
@@ -348,6 +363,16 @@ function Panel() {
             </span>
           </span>
         </button>
+        {failed && (
+          <button
+            type="button"
+            className="prow__clear"
+            title={t("panel.clearFailureAria", { name: p.name })}
+            onClick={() => void clearFailure(p.account_id, p.project_id)}
+          >
+            {t("panel.clear")}
+          </button>
+        )}
       </li>
     );
   };

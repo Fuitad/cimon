@@ -210,6 +210,14 @@ pub fn run() {
                         .clone();
                     state.updates.seed_dismissed_version(dismissed);
                 }
+                // Restore CI failures dismissed via Clear in a previous run, so the tray and panel
+                // stay green across a restart until a genuinely new pipeline run supersedes them.
+                {
+                    let state = app.state::<commands::AppState>();
+                    let list = state.config.lock().unwrap().dismissed_failures.clone();
+                    *state.dismissed_failures.lock().unwrap() =
+                        commands::dismissed_failures_from_config(&list);
+                }
                 updates::spawn_update_checks(app.handle().clone());
 
                 let config = app.state::<commands::AppState>().config.clone();
@@ -242,18 +250,22 @@ pub fn run() {
                                 );
                             }
                         },
-                        move |status, snapshot, token_health| {
+                        move |_status, snapshot, token_health| {
                             // Publish the per-project AND per-account snapshots to shared state in a
                             // scoped lock (released before anything reads them). The panel reads
                             // project_status (rows) + token_health (per-row auth-failed flag) via
                             // get_project_statuses; the settings UI reads token_health via
-                            // get_token_health; the tray glyph reflects the aggregate.
-                            {
+                            // get_token_health; the tray glyph reflects the aggregate. The raw
+                            // poller-computed `status` is ignored in favor of `effective_aggregate`,
+                            // which also excludes a project whose failure the user dismissed.
+                            let effective = {
                                 let state = app_for_tray.state::<commands::AppState>();
                                 *state.project_status.lock().unwrap() = snapshot.clone();
                                 *state.token_health.lock().unwrap() = token_health.clone();
-                            }
-                            tray::set_status(&tray_for_status, status);
+                                let dismissed_failures = state.dismissed_failures.lock().unwrap();
+                                commands::effective_aggregate(snapshot, &dismissed_failures)
+                            };
+                            tray::set_status(&tray_for_status, effective);
                             // Nudge an open panel to re-fetch the fresh snapshot (cheap when closed).
                             panel::notify_changed(&app_for_tray);
                         },
@@ -311,6 +323,7 @@ pub fn run() {
             commands::get_token_health,
             commands::update_account_token,
             commands::open_project_url,
+            commands::clear_failure,
             commands::app_info,
             commands::show_settings_window,
             commands::quit_app,

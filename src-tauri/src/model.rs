@@ -172,6 +172,15 @@ pub struct Account {
     pub identity: Identity,
 }
 
+/// A CI failure the user dismissed via `clear_failure`. Applies only while the project's current
+/// pipeline is still `pipeline_id`; a newer run automatically supersedes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DismissedFailure {
+    pub account_id: String,
+    pub project_id: u64,
+    pub pipeline_id: u64,
+}
+
 /// A project the user has chosen to monitor. Account-scoped, because a GitLab project id
 /// is unique only within its instance/account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,6 +280,9 @@ pub struct Config {
     /// The update version the user dismissed, persisted so dismissing an update banner survives a
     /// restart. `None` means nothing is dismissed. Internal-only, not exposed to the frontend.
     pub dismissed_update_version: Option<String>,
+    /// CI failures the user dismissed via `clear_failure`, persisted so a dismissal survives a
+    /// restart. Each entry auto-expires once its project's current pipeline id no longer matches.
+    pub dismissed_failures: Vec<DismissedFailure>,
 }
 
 impl Default for Config {
@@ -285,6 +297,7 @@ impl Default for Config {
             ui_mode: UiMode::System,
             menu_bar_notice_shown: false,
             dismissed_update_version: None,
+            dismissed_failures: Vec::new(),
         }
     }
 }
@@ -462,6 +475,23 @@ mod tests {
         // The menu-bar notice flag defaults off for a config that predates it, so an existing
         // user sees the notice once on their next hidden launch rather than never.
         assert!(!old.menu_bar_notice_shown);
+    }
+
+    #[test]
+    fn config_dismissed_failures_roundtrips_and_defaults_empty() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.dismissed_failures, Vec::new());
+        cfg.dismissed_failures.push(DismissedFailure {
+            account_id: "acc-1".to_string(),
+            project_id: 42,
+            pipeline_id: 100,
+        });
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.dismissed_failures, cfg.dismissed_failures);
+        // A config written before this field still loads with an empty Vec (serde default).
+        let old: Config = serde_json::from_str(r#"{"poll_interval_secs":30}"#).unwrap();
+        assert!(old.dismissed_failures.is_empty());
     }
 
     #[test]

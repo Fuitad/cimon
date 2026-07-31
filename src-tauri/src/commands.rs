@@ -15,8 +15,8 @@ use url::Url;
 use crate::config;
 use crate::i18n;
 use crate::model::{
-    Account, Config, Identity, MonitoredProject, NotificationRules, PipelineStatus, ProviderKind,
-    UiMode, MAX_POLL_SECS, MIN_POLL_SECS,
+    Account, Config, DismissedFailure, Identity, MonitoredProject, NotificationRules,
+    PipelineStatus, ProviderKind, UiMode, MAX_POLL_SECS, MIN_POLL_SECS,
 };
 use crate::poller::{ProjectKey, ProjectStatusView, TokenHealthView};
 use crate::provider::{
@@ -407,6 +407,9 @@ pub struct PanelProject {
     /// `true` when the account's token is dead (expired/revoked/invalid). Takes visual precedence
     /// over `stale` in the panel: the row reads "authentication failed", not "offline".
     pub auth_failed: bool,
+    /// `true` when the user dismissed this project's current failure via the Clear action; the row
+    /// reads "Cleared" instead of "Failed" until a new pipeline run supersedes it.
+    pub dismissed: bool,
 }
 
 /// Per-account token health for the settings UI, joining the account list onto the poller's
@@ -441,6 +444,11 @@ pub struct AppState {
     /// panel (`auth_failed` per project) and the settings UI (`get_token_health`). Empty until the
     /// first poll completes; runtime-only (never persisted).
     pub token_health: Arc<Mutex<HashMap<String, TokenHealthView>>>,
+    /// Failures the user dismissed via `clear_failure` (project key -> the dismissed pipeline id).
+    /// Seeded from `Config.dismissed_failures` at startup; mutated and re-persisted by
+    /// `clear_failure`. A dismissal excludes its project from the tray aggregate and marks its
+    /// panel row `dismissed` as long as the project's live pipeline id still matches.
+    pub dismissed_failures: Arc<Mutex<HashMap<ProjectKey, u64>>>,
     /// `Some` only in dev-only fixtures mode (see `fixtures.rs`): carries the fabricated discovered
     /// tree (served by `list_discovered_projects`) and the one-shot tray aggregate. `None` in normal
     /// operation, where the live poller drives everything.
@@ -491,6 +499,7 @@ impl AppState {
                 config_path: std::env::temp_dir().join("cimon-fixtures-config.json"),
                 project_status: Arc::new(Mutex::new(fx.project_status)),
                 token_health: Arc::new(Mutex::new(fx.token_health)),
+                dismissed_failures: Arc::new(Mutex::new(HashMap::new())),
                 fixtures: Some(crate::fixtures::FixtureState {
                     discovered: fx.discovered,
                     aggregate: fx.aggregate,
@@ -515,6 +524,7 @@ impl AppState {
             config_path,
             project_status: Arc::new(Mutex::new(HashMap::new())),
             token_health: Arc::new(Mutex::new(HashMap::new())),
+            dismissed_failures: Arc::new(Mutex::new(HashMap::new())),
             fixtures: None,
             updates: crate::updates::UpdateManager::new(),
         }
@@ -694,16 +704,79 @@ pub fn set_launch_at_login(
 /// matters because `set_monitored_logic` replaces an account's entries by removing then
 /// re-appending them to `cfg.monitored`, which would otherwise silently move that account to the
 /// end of the panel every time its monitored set is edited.
-/// Join the monitored set with the latest per-project status snapshot and per-account token health
-/// into the panel DTO. Extracted from the command so it is testable without a Tauri runtime.
+/// Whether `view`'s CURRENT pipeline is the one dismissed via `clear_failure`. A project with no
+/// current pipeline (`pipeline_id: None`) is never considered dismissed.
+fn is_dismissed(
+    view: &ProjectStatusView,
+    key: &ProjectKey,
+    dismissed: &HashMap<ProjectKey, u64>,
+) -> bool {
+    view.pipeline_id
+        .is_some_and(|id| dismissed.get(key) == Some(&id))
+}
+
+/// Worst-severity status across the snapshot, for the tray icon. Mirrors
+/// `PollState::aggregate_status`'s exclusion of decayed in-flight ("Offline") projects. A
+/// dismissed project contributes `Success` (the lowest severity) rather than being excluded
+/// outright: excluding it entirely would make the aggregate `None` (the white idle icon) whenever
+/// it was the only non-offline project with a status, contradicting the very point of Clear --
+/// the tray must read green, not idle. `Success`'s severity (0) can never outrank a real Failed
+/// (3) / Running (2) / Pending (1) elsewhere in the snapshot, so this never masks a genuine
+/// problem on another project. Operates on the published DTO snapshot (not poller internals) so
+/// it can be recomputed instantly from a command, not just each poll tick.
+pub(crate) fn effective_aggregate(
+    snapshot: &HashMap<ProjectKey, ProjectStatusView>,
+    dismissed: &HashMap<ProjectKey, u64>,
+) -> Option<PipelineStatus> {
+    snapshot
+        .iter()
+        .filter(|(_, v)| !v.offline)
+        .filter_map(|(k, v)| {
+            if is_dismissed(v, k, dismissed) {
+                Some(PipelineStatus::Success)
+            } else {
+                v.status
+            }
+        })
+        .max_by_key(|s| s.severity())
+}
+
+/// Convert the in-memory dismissal map to the persisted `Config` shape.
+pub(crate) fn dismissed_failures_to_config(
+    map: &HashMap<ProjectKey, u64>,
+) -> Vec<DismissedFailure> {
+    map.iter()
+        .map(|((account_id, project_id), pipeline_id)| DismissedFailure {
+            account_id: account_id.clone(),
+            project_id: *project_id,
+            pipeline_id: *pipeline_id,
+        })
+        .collect()
+}
+
+/// Convert the persisted `Config` shape back to the in-memory dismissal map. Used both at startup
+/// (seeding `AppState.dismissed_failures`) and by the restart-persistence test below.
+pub(crate) fn dismissed_failures_from_config(
+    list: &[DismissedFailure],
+) -> HashMap<ProjectKey, u64> {
+    list.iter()
+        .map(|d| ((d.account_id.clone(), d.project_id), d.pipeline_id))
+        .collect()
+}
+
+/// Join the monitored set with the latest per-project status snapshot, per-account token health,
+/// and dismissed failures into the panel DTO. Extracted from the command so it is testable without
+/// a Tauri runtime.
 fn build_panel_projects(
     cfg: &Config,
     snapshot: &HashMap<ProjectKey, ProjectStatusView>,
     health: &HashMap<String, TokenHealthView>,
+    dismissed_failures: &HashMap<ProjectKey, u64>,
 ) -> Vec<PanelProject> {
     let to_panel_project = |mp: &MonitoredProject| {
         let acct = cfg.accounts.iter().find(|a| a.id == mp.account_id);
-        let view = snapshot.get(&(mp.account_id.clone(), mp.project_id));
+        let key = (mp.account_id.clone(), mp.project_id);
+        let view = snapshot.get(&key);
         PanelProject {
             account_id: mp.account_id.clone(),
             account_label: acct.map(|a| a.label.clone()).unwrap_or_default(),
@@ -719,6 +792,7 @@ fn build_panel_projects(
             no_pipelines: view.is_some_and(|v| v.no_pipelines),
             offline: view.is_some_and(|v| v.offline),
             auth_failed: health.get(&mp.account_id).is_some_and(|h| h.auth_failed),
+            dismissed: view.is_some_and(|v| is_dismissed(v, &key, dismissed_failures)),
         }
     };
 
@@ -752,7 +826,74 @@ pub fn get_project_statuses(
     let cfg = state.config.lock().unwrap();
     let snapshot = state.project_status.lock().unwrap();
     let health = state.token_health.lock().unwrap();
-    Ok(build_panel_projects(&cfg, &snapshot, &health))
+    let dismissed_failures = state.dismissed_failures.lock().unwrap();
+    Ok(build_panel_projects(
+        &cfg,
+        &snapshot,
+        &health,
+        &dismissed_failures,
+    ))
+}
+
+/// Core logic for `clear_failure`, extracted for testability. Given the shared state's guards and
+/// the project to dismiss, records the dismissal, persists it, and returns the resulting tray
+/// aggregate. `clear_failure` wraps this with the Tauri handle types and the tray/panel refresh.
+fn clear_failure_logic(
+    cfg: &Mutex<Config>,
+    cfg_path: &Path,
+    project_status: &Mutex<HashMap<ProjectKey, ProjectStatusView>>,
+    dismissed_failures: &Mutex<HashMap<ProjectKey, u64>>,
+    key: ProjectKey,
+) -> Result<Option<PipelineStatus>, CommandError> {
+    let mut cfg = cfg.lock().unwrap();
+    let snapshot = project_status.lock().unwrap();
+
+    let pipeline_id = snapshot
+        .get(&key)
+        .filter(|v| v.status == Some(PipelineStatus::Failed))
+        .and_then(|v| v.pipeline_id);
+    let Some(pipeline_id) = pipeline_id else {
+        return Err(CommandError::new(
+            CommandErrorKind::NotFound,
+            "no active failure to clear",
+        ));
+    };
+
+    let mut dismissed = dismissed_failures.lock().unwrap();
+    // SHORTCUT: entries whose pipeline has moved on are pruned only when the user clears another
+    // failure, so an occasional-clearer's config.json can accumulate a few dead entries between
+    // clears. Upgrade trigger: prune in the lib.rs tick callback alongside effective_aggregate if
+    // this ever needs bounding.
+    dismissed.retain(|k, id| snapshot.get(k).and_then(|v| v.pipeline_id) == Some(*id));
+    dismissed.insert(key, pipeline_id);
+
+    cfg.dismissed_failures = dismissed_failures_to_config(&dismissed);
+    config::save(cfg_path, &cfg).map_err(storage_err)?;
+
+    Ok(effective_aggregate(&snapshot, &dismissed))
+}
+
+/// Dismiss a project's current CI failure: the panel row and tray icon go green (see
+/// `effective_aggregate`) until a genuinely new pipeline run for that project is observed.
+#[tauri::command]
+pub fn clear_failure(
+    webview: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: String,
+    project_id: u64,
+) -> Result<(), CommandError> {
+    require_webview(&webview, &["panel"])?;
+    let effective = clear_failure_logic(
+        &state.config,
+        &state.config_path,
+        &state.project_status,
+        &state.dismissed_failures,
+        (account_id, project_id),
+    )?;
+    crate::tray::refresh_status(&app, effective);
+    crate::panel::notify_changed(&app);
+    Ok(())
 }
 
 /// Join the account list onto the runtime token-health snapshot, one entry per account in config
@@ -1156,6 +1297,109 @@ mod tests {
             config::load(&path).dismissed_update_version,
             None,
             "clearing the dismissal should persist too"
+        );
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn clear_failure_logic_dismisses_persists_and_rearms_on_new_pipeline() {
+        let path = temp_path("clear-failure");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let cfg = Mutex::new(Config::default());
+        let key: ProjectKey = ("acct".to_string(), 1);
+        let project_status = Mutex::new(HashMap::from([(
+            key.clone(),
+            ProjectStatusView {
+                status: Some(PipelineStatus::Failed),
+                branch: "main".into(),
+                updated_at: String::new(),
+                stale: false,
+                no_pipelines: false,
+                offline: false,
+                pipeline_url: String::new(),
+                pipeline_id: Some(1),
+            },
+        )]));
+        let dismissed_failures = Mutex::new(HashMap::new());
+
+        let effective = clear_failure_logic(
+            &cfg,
+            &path,
+            &project_status,
+            &dismissed_failures,
+            key.clone(),
+        )
+        .expect("a Failed project should be dismissable");
+        assert_eq!(
+            effective,
+            Some(PipelineStatus::Success),
+            "the tray must go green, not idle, once the only failure is dismissed"
+        );
+
+        // Simulate an app restart: reload the config from disk and re-derive the in-memory map
+        // exactly as lib.rs's startup seed does.
+        let reloaded = dismissed_failures_from_config(&config::load(&path).dismissed_failures);
+        assert_eq!(
+            reloaded,
+            *dismissed_failures.lock().unwrap(),
+            "the dismissal should survive a restart"
+        );
+
+        // A genuinely new pipeline run supersedes the dismissal: mutate the snapshot to a new id
+        // and confirm the SAME (untouched) dismissed_failures map no longer excludes it.
+        project_status
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .pipeline_id = Some(2);
+        let rearmed = effective_aggregate(
+            &project_status.lock().unwrap(),
+            &dismissed_failures.lock().unwrap(),
+        );
+        assert_eq!(
+            rearmed,
+            Some(PipelineStatus::Failed),
+            "a new pipeline id must re-arm the aggregate even though nothing was un-dismissed"
+        );
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn clear_failure_logic_rejects_a_project_that_is_not_currently_failed() {
+        let path = temp_path("clear-failure-not-failed");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let cfg = Mutex::new(Config::default());
+        let key: ProjectKey = ("acct".to_string(), 1);
+        let project_status = Mutex::new(HashMap::from([(
+            key.clone(),
+            ProjectStatusView {
+                status: Some(PipelineStatus::Success),
+                branch: "main".into(),
+                updated_at: String::new(),
+                stale: false,
+                no_pipelines: false,
+                offline: false,
+                pipeline_url: String::new(),
+                pipeline_id: Some(9),
+            },
+        )]));
+        let dismissed_failures = Mutex::new(HashMap::new());
+
+        let result = clear_failure_logic(&cfg, &path, &project_status, &dismissed_failures, key);
+        assert!(
+            result.is_err(),
+            "a Success project should not be dismissable"
+        );
+        assert!(dismissed_failures.lock().unwrap().is_empty());
+        assert!(cfg.lock().unwrap().dismissed_failures.is_empty());
+        assert!(
+            !path.exists(),
+            "an error must not have written anything to disk"
         );
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -1627,11 +1871,122 @@ mod tests {
                 expires_at: None,
             },
         )]);
-        let rows = build_panel_projects(&cfg, &snapshot, &health);
+        let rows = build_panel_projects(&cfg, &snapshot, &health, &HashMap::new());
         assert_eq!(rows.len(), 1);
         assert!(
             rows[0].auth_failed,
             "dead-token account flags its project rows"
+        );
+    }
+
+    #[test]
+    fn build_panel_projects_sets_dismissed_only_on_the_matching_row() {
+        let cfg = Config {
+            accounts: vec![account("a", ProviderKind::Gitlab, "https://gitlab.com")],
+            monitored: vec![
+                MonitoredProject {
+                    account_id: "a".into(),
+                    project_id: 1,
+                    name: "dismissed-project".into(),
+                    web_url: "http://x".into(),
+                    remote_ref: None,
+                },
+                MonitoredProject {
+                    account_id: "a".into(),
+                    project_id: 2,
+                    name: "other-project".into(),
+                    web_url: "http://y".into(),
+                    remote_ref: None,
+                },
+            ],
+            ..Config::default()
+        };
+        let view = |pipeline_id: u64| ProjectStatusView {
+            status: Some(PipelineStatus::Failed),
+            branch: "main".into(),
+            updated_at: String::new(),
+            stale: false,
+            no_pipelines: false,
+            offline: false,
+            pipeline_url: String::new(),
+            pipeline_id: Some(pipeline_id),
+        };
+        let snapshot = HashMap::from([
+            (("a".to_string(), 1), view(10)),
+            (("a".to_string(), 2), view(20)),
+        ]);
+        let dismissed_failures = HashMap::from([(("a".to_string(), 1), 10)]);
+
+        let rows = build_panel_projects(&cfg, &snapshot, &HashMap::new(), &dismissed_failures);
+        let dismissed_row = rows.iter().find(|r| r.project_id == 1).unwrap();
+        let other_row = rows.iter().find(|r| r.project_id == 2).unwrap();
+        assert!(
+            dismissed_row.dismissed,
+            "the row whose current pipeline id matches dismissed_failures must be marked dismissed"
+        );
+        assert!(
+            !other_row.dismissed,
+            "a row with a different current pipeline id must not be marked dismissed"
+        );
+    }
+
+    #[test]
+    fn effective_aggregate_is_green_when_the_only_status_is_dismissed() {
+        let key: ProjectKey = ("a".to_string(), 1);
+        let view = ProjectStatusView {
+            status: Some(PipelineStatus::Failed),
+            branch: "main".into(),
+            updated_at: String::new(),
+            stale: false,
+            no_pipelines: false,
+            offline: false,
+            pipeline_url: String::new(),
+            pipeline_id: Some(1),
+        };
+        let snapshot = HashMap::from([(key.clone(), view)]);
+        let dismissed = HashMap::from([(key, 1)]);
+
+        assert_eq!(
+            effective_aggregate(&snapshot, &dismissed),
+            Some(PipelineStatus::Success),
+            "dismissing the sole failure must read as green, not idle"
+        );
+    }
+
+    #[test]
+    fn effective_aggregate_does_not_let_a_dismissal_mask_a_real_failure_elsewhere() {
+        let dismissed_key: ProjectKey = ("a".to_string(), 1);
+        let failing_key: ProjectKey = ("a".to_string(), 2);
+        let dismissed_view = ProjectStatusView {
+            status: Some(PipelineStatus::Failed),
+            branch: "main".into(),
+            updated_at: String::new(),
+            stale: false,
+            no_pipelines: false,
+            offline: false,
+            pipeline_url: String::new(),
+            pipeline_id: Some(1),
+        };
+        let failing_view = ProjectStatusView {
+            status: Some(PipelineStatus::Failed),
+            branch: "main".into(),
+            updated_at: String::new(),
+            stale: false,
+            no_pipelines: false,
+            offline: false,
+            pipeline_url: String::new(),
+            pipeline_id: Some(2),
+        };
+        let snapshot = HashMap::from([
+            (dismissed_key.clone(), dismissed_view),
+            (failing_key, failing_view),
+        ]);
+        let dismissed = HashMap::from([(dismissed_key, 1)]);
+
+        assert_eq!(
+            effective_aggregate(&snapshot, &dismissed),
+            Some(PipelineStatus::Failed),
+            "a genuinely failing sibling project must still turn the tray red"
         );
     }
 
@@ -1665,7 +2020,7 @@ mod tests {
             ],
             ..Config::default()
         };
-        let rows = build_panel_projects(&cfg, &HashMap::new(), &HashMap::new());
+        let rows = build_panel_projects(&cfg, &HashMap::new(), &HashMap::new(), &HashMap::new());
         assert_eq!(
             rows.iter()
                 .map(|r| r.account_id.as_str())
@@ -1697,6 +2052,7 @@ mod tests {
                 no_pipelines: false,
                 offline: false,
                 pipeline_url: "https://github.com/acme/p/actions/runs/55".into(),
+                pipeline_id: Some(55),
             },
         )]);
         assert_eq!(
@@ -1728,6 +2084,7 @@ mod tests {
                 no_pipelines: false,
                 offline: false,
                 pipeline_url: "https://github.com/acme/p/actions/runs/54".into(),
+                pipeline_id: Some(54),
             },
         )]);
         assert_eq!(
