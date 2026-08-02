@@ -138,6 +138,42 @@ rm cert-base64.txt authkey-base64.txt
 
 ## Cutting a release
 
+### 1. Bump the version
+
+The version string lives in five places and all of them must agree. The tag you push must match
+them, since `latest.json` and the installer file names are built from the manifest version, not
+from the tag.
+
+| File | Where |
+| --- | --- |
+| `package.json` | the top level `"version"` field |
+| `package-lock.json` | two fields: the top level `"version"` and `packages[""].version` |
+| `src-tauri/Cargo.toml` | `version` under `[package]` |
+| `src-tauri/Cargo.lock` | the `version` line inside the `[[package]]` block whose `name = "cimon"` |
+| `src-tauri/tauri.conf.json` | the top level `"version"` field |
+
+Do not bump `src-tauri/Cargo.lock` with a blind find and replace on the old version string. The
+lockfile pins every transitive crate, so an unrelated dependency can sit at the exact version
+CIMon is moving off (as of v0.1.16, `triomphe` is at `0.1.15`, the version CIMon just left).
+Replacing every match rewrites that dependency's pin to a version that does not exist upstream
+and the next `cargo build` fails. Always locate the `[[package]]` block by `name = "cimon"` and
+change only the `version` line inside it. Check the result before committing:
+
+```sh
+rg -n -A1 'name = "cimon"' src-tauri/Cargo.lock
+```
+
+### 2. Update the changelog
+
+Add a section to `CHANGELOG.md` for the new version, dated the release day, newest first,
+grouped under `### Added`, `### Fixed`, and `### Security` as applicable. Describe the change in
+user-facing terms, not in terms of the code that moved. Confirm `README.md` does not also need
+updating for anything user visible in this release.
+
+Commit the bump and the changelog together as `chore(release): prepare vX.Y.Z`.
+
+### 3. Tag and push
+
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
@@ -146,7 +182,7 @@ git push origin v0.1.0
 The workflow builds every platform, signs and notarizes the macOS package, and creates a
 draft GitHub Release with the installers and complete `latest.json` attached. Review the draft,
 confirm `latest.json` contains `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`, then
-publish it.
+publish it. Publishing is what triggers the Homebrew tap sync described below.
 
 To build the bundles without creating a release (for a dry run), trigger the workflow manually
 from the Actions tab. The bundles are uploaded as run artifacts instead. A manual run does not
