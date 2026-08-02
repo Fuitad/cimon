@@ -35,7 +35,8 @@ const previewParam = (): string | null =>
   typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("preview") : null;
 const previewEmpty = () => previewParam() === "empty";
 // `?preview=stress` exercises the hardening edge cases: very long names, deep namespace paths, a
-// group with many projects, and a second account whose discovery fails (per-account error + retry).
+// group with many projects, a second account whose discovery fails (per-account error + retry), and
+// a monitored project discovery no longer reports (the removable orphan row).
 const previewStress = () => previewParam() === "stress";
 // `?preview=github` exercises the GitHub provider path: a GitHub account whose discovered repos
 // carry `remote_ref` (owner/repo), so the provider selector and remote_ref toggle flow are reviewable.
@@ -166,6 +167,21 @@ const STRESS_MONITORED: MonitoredProject[] = [
       web_url: `https://gitlab.com/${STRESS_GROUP}/service-${n}`,
     };
   }),
+  // Orphan: monitored, but absent from STRESS_PROJECTS, so acc-1's discovery proves it is gone and
+  // it renders as a removable row. Its counterpart below belongs to acc-2, whose discovery FAILS:
+  // that one must keep NOT rendering as an orphan, since a failed lookup is not evidence of removal.
+  {
+    account_id: "acc-1",
+    project_id: 950,
+    name: "decommissioned-service",
+    web_url: "https://gitlab.com/acme/ops/decommissioned-service",
+  },
+  {
+    account_id: "acc-2",
+    project_id: 951,
+    name: "unreachable-account-project",
+    web_url: "https://gitlab.com/acme/ops/unreachable-account-project",
+  },
 ];
 
 // GitHub preview fixtures (dev only, `?preview=github`). Repos carry `remote_ref` so the monitored

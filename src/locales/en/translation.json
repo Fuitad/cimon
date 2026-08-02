@@ -99,7 +99,9 @@
     "loading": "Loading projects...",
     "none": "No projects found for this account.",
     "noMatch": "No projects match your search.",
-    "loadError": "Could not load projects: {{message}}"
+    "loadError": "Could not load projects: {{message}}",
+    "orphanNote": "Still monitored, but no longer found on this account. The project was deleted, moved, or your token lost access to it.",
+    "orphanRemoveAria": "Stop monitoring {{name}}"
   },
   "status": {
     "running": "Running",

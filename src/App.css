@@ -130,6 +130,17 @@
   padding: var(--space-3);
   font-size: 0.8125rem;
 }
+.orphans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.orphans__note {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
 .subgroup__error {
   display: flex;
   align-items: center;

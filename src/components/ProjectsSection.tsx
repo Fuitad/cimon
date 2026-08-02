@@ -159,6 +159,35 @@ function ProjectsSection({ accounts }: ProjectsSectionProps) {
     });
   };
 
+  // Monitored entries the provider no longer reports: the project was deleted, transferred, or the
+  // token lost access to it. They have no row in the tree to untick (the tree is built from
+  // discovery and keys on `project_id`), so without this they are stranded in the config forever.
+  // Only an account whose discovery actually SUCCEEDED can testify that a project is gone: while it
+  // is loading, or after it errored, `discovered` is missing or stale and every entry would look
+  // orphaned. Both providers walk pagination to exhaustion, so a completed list is a complete one.
+  const orphansByAccount = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const result: Record<string, MonitoredProject[]> = {};
+    for (const account of accounts) {
+      const all = discovered[account.id];
+      if (!all || errors[account.id]) {
+        result[account.id] = [];
+        continue;
+      }
+      const live = new Set(all.map((p) => p.id));
+      result[account.id] = monitored.filter(
+        (m) =>
+          m.account_id === account.id &&
+          !live.has(m.project_id) &&
+          m.name.toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [accounts, discovered, errors, monitored, query]);
+
+  const removeOrphan = (accountId: string, projectId: number) =>
+    commit(accountId, (current) => current.filter((m) => m.project_id !== projectId));
+
   const toggle = (account: Account, proj: DiscoveredProject) =>
     commit(account.id, (current) =>
       current.some((m) => m.project_id === proj.id)
@@ -237,6 +266,7 @@ function ProjectsSection({ accounts }: ProjectsSectionProps) {
             const groups = groupsByAccount[account.id] ?? [];
             const isLoading = loadingIds.has(account.id) && !all;
             const err = errors[account.id];
+            const orphans = orphansByAccount[account.id] ?? [];
             return (
               <div className="subgroup" key={account.id}>
                 {accounts.length > 1 && (
@@ -347,6 +377,35 @@ function ProjectsSection({ accounts }: ProjectsSectionProps) {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+                {orphans.length > 0 && (
+                  <div className="orphans">
+                    <p className="orphans__note">{t("projects.orphanNote")}</p>
+                    <ul className="rows">
+                      {orphans.map((m) => (
+                        <li className="row" key={m.project_id}>
+                          <div className="row__main">
+                            <span className="row__title" title={m.name}>
+                              {m.name}
+                            </span>
+                            <span className="row__meta">
+                              <span className="mono row__url">{m.remote_ref ?? m.web_url}</span>
+                            </span>
+                          </div>
+                          <div className="row__actions">
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--danger"
+                              onClick={() => removeOrphan(account.id, m.project_id)}
+                              aria-label={t("projects.orphanRemoveAria", { name: m.name })}
+                            >
+                              {t("common.remove")}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>

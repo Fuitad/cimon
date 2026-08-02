@@ -98,6 +98,51 @@ describe("ProjectsSection", () => {
     expect(monitored.map((m) => m.project_id).sort((a, b) => a - b)).toEqual([1, 2]);
   });
 
+  it("offers to remove a monitored project that discovery no longer reports", async () => {
+    vi.mocked(getMonitoredProjects).mockResolvedValue([
+      {
+        account_id: "acc-1",
+        project_id: 1,
+        name: "web-app",
+        web_url: "https://gl/acme/frontend/web-app",
+      },
+      {
+        account_id: "acc-1",
+        project_id: 99,
+        name: "deleted-service",
+        web_url: "https://gl/acme/gone",
+      },
+    ]);
+    renderWithI18n(<ProjectsSection accounts={accounts} />);
+
+    const remove = await screen.findByRole("button", { name: "projects.orphanRemoveAria" });
+    expect(screen.getByText("deleted-service")).toBeInTheDocument();
+
+    await user().click(remove);
+
+    expect(setMonitoredProjects).toHaveBeenCalledWith("acc-1", [
+      expect.objectContaining({ project_id: 1 }),
+    ]);
+  });
+
+  it("does not treat monitored projects as orphaned while discovery is failing", async () => {
+    vi.mocked(listDiscoveredProjects).mockRejectedValueOnce(
+      Object.assign(new Error("connection refused"), { kind: "network" }),
+    );
+    vi.mocked(getMonitoredProjects).mockResolvedValue([
+      {
+        account_id: "acc-1",
+        project_id: 1,
+        name: "web-app",
+        web_url: "https://gl/acme/frontend/web-app",
+      },
+    ]);
+    renderWithI18n(<ProjectsSection accounts={accounts} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("projects.loadError");
+    expect(screen.queryByRole("button", { name: "projects.orphanRemoveAria" })).toBeNull();
+  });
+
   it("expands and collapses a group's project list", async () => {
     renderWithI18n(<ProjectsSection accounts={accounts} />);
     const u = user();

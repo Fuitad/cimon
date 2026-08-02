@@ -99,7 +99,9 @@
     "loading": "Chargement des projets...",
     "none": "Aucun projet trouvé pour ce compte.",
     "noMatch": "Aucun projet ne correspond à votre recherche.",
-    "loadError": "Impossible de charger les projets : {{message}}"
+    "loadError": "Impossible de charger les projets : {{message}}",
+    "orphanNote": "Toujours surveillés, mais introuvables sur ce compte. Le projet a été supprimé ou déplacé, ou votre jeton n'y a plus accès.",
+    "orphanRemoveAria": "Ne plus surveiller {{name}}"
   },
   "status": {
     "running": "En cours",
