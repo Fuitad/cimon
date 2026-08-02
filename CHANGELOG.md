@@ -2,6 +2,20 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.16] (2026-08-02)
+
+### Added
+
+* A failed pipeline can now be dismissed from the popover. A failed row has a `Clear` button that turns that row and the tray icon green immediately, and the dismissal survives an app restart. It lasts until the provider reports a genuinely new pipeline run for that project, at which point the row follows the new result again. The row reads "Cleared" rather than "Passed", so the popover never claims a pipeline succeeded when it did not. The dismissal is local to CIMon and changes nothing on the CI server.
+
+### Fixed
+
+* The native right-click menu no longer appears over the popover and Settings windows in installed builds, where it was showing up as an unexplained floating "Reload" item. It stays available in a development build, where right-click then Inspect Element is the only way to reach the developer tools.
+
+### Security
+
+* Bumped the development-only npm dependencies `postcss` (path traversal in previous source map loading) and `brace-expansion` (denial of service through unbounded expansion) to pick up the upstream fixes. Both reach the tree through build and lint tooling only, so neither ships in the app.
+
 ## [0.1.15] (2026-07-24)
 
 ### Added
