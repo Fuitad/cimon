@@ -67,13 +67,23 @@ export function validateReleaseWorkflow(path) {
     'createUpdaterArtifacts":true',
   ]);
 
+  // tauri-action has no changelog input and seeds every draft with a placeholder body, so releases
+  // shipped "See the assets below..." until the finalize job started overwriting it. This assert
+  // makes a tag with no CHANGELOG.md section fail before the build rather than after it.
+  assertStep(yaml, "Assert CHANGELOG.md documents this tag", [
+    "if: startsWith(github.ref, 'refs/tags/')",
+    "shell: bash",
+    "node scripts/extract-changelog-section.mjs CHANGELOG.md",
+  ]);
+
   assertOrdered(
     yaml,
     [
       "- name: Assert updater signing secrets on tag releases",
+      "- name: Assert CHANGELOG.md documents this tag",
       "- name: Build app and bundle installers",
     ],
-    "release workflow must gate signing secrets before the build",
+    "release workflow must gate signing secrets and the changelog entry before the build",
   );
 
   // The finalize job builds latest.json from the .sig assets tauri-action uploaded to the draft
@@ -112,6 +122,14 @@ export function validateReleaseWorkflow(path) {
     ],
     "release workflow must delete the existing latest.json before re-uploading",
   );
+
+  // The draft's body is set here, once, rather than through the build step's releaseBody, which all
+  // three matrix legs would race to write on the same draft.
+  assertStep(yaml, "Set the release notes from CHANGELOG.md", [
+    "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+    "node scripts/extract-changelog-section.mjs CHANGELOG.md",
+    'gh release edit "$tag" --notes-file release-notes.md',
+  ]);
 
   assertNotContains(
     yaml,

@@ -61,6 +61,33 @@ describe("validateReleaseWorkflow", () => {
     ).toThrow(/Assemble latest.json from release signatures/);
   });
 
+  it("rejects dropping the changelog gate that runs before the build", () => {
+    expect(
+      validateMutatedWorkflow((yaml) =>
+        yaml.replace("- name: Assert CHANGELOG.md documents this tag", "- name: Missing"),
+      ),
+    ).toThrow(/missing step: Assert CHANGELOG.md documents this tag/);
+  });
+
+  it("rejects a finalize job that leaves tauri-action's placeholder as the release body", () => {
+    expect(
+      validateMutatedWorkflow((yaml) =>
+        yaml.replace("- name: Set the release notes from CHANGELOG.md", "- name: Missing"),
+      ),
+    ).toThrow(/missing step: Set the release notes from CHANGELOG.md/);
+  });
+
+  it("rejects a release-notes step that no longer writes the body to the release", () => {
+    expect(
+      validateMutatedWorkflow((yaml) =>
+        yaml.replace(
+          'gh release edit "$tag" --notes-file release-notes.md',
+          "cat release-notes.md",
+        ),
+      ),
+    ).toThrow(/Set the release notes from CHANGELOG.md/);
+  });
+
   it("rejects uploading latest.json before deleting the existing asset", () => {
     expect(
       validateMutatedWorkflow((yaml) =>

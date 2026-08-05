@@ -166,9 +166,13 @@ rg -n -A1 'name = "cimon"' src-tauri/Cargo.lock
 ### 2. Update the changelog
 
 Add a section to `CHANGELOG.md` for the new version, dated the release day, newest first,
-grouped under `### Added`, `### Fixed`, and `### Security` as applicable. Describe the change in
-user-facing terms, not in terms of the code that moved. Confirm `README.md` does not also need
-updating for anything user visible in this release.
+grouped under `### Added`, `### Changed`, `### Fixed`, and `### Security` as applicable. Describe
+the change in user-facing terms, not in terms of the code that moved. Confirm `README.md` does not
+also need updating for anything user visible in this release.
+
+This section becomes the GitHub Release notes verbatim, so write it for the people reading the
+release page. The workflow extracts it by heading (`## [X.Y.Z]`) and fails before building if the
+tag has no matching section, so a release can no longer ship with a placeholder body.
 
 Commit the bump and the changelog together as `chore(release): prepare vX.Y.Z`.
 
@@ -180,9 +184,11 @@ git push origin v0.1.0
 ```
 
 The workflow builds every platform, signs and notarizes the macOS package, and creates a
-draft GitHub Release with the installers and complete `latest.json` attached. Review the draft,
-confirm `latest.json` contains `darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`, then
-publish it. Publishing is what triggers the Homebrew tap sync described below.
+draft GitHub Release with the installers and complete `latest.json` attached. It also replaces
+tauri-action's placeholder body with this version's `CHANGELOG.md` section, so the draft arrives
+with its release notes already written. Review the draft, confirm `latest.json` contains
+`darwin-aarch64`, `darwin-x86_64`, and `windows-x86_64`, then publish it. Publishing is what
+triggers the Homebrew tap sync described below.
 
 To build the bundles without creating a release (for a dry run), trigger the workflow manually
 from the Actions tab. The bundles are uploaded as run artifacts instead. A manual run does not
