@@ -2,6 +2,20 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.17] (2026-08-05)
+
+### Changed
+
+* The `Clear` button on a failed row now stays out of sight until you point at the row, sliding in from the right and sliding back out once the pointer leaves. It stays reachable from the keyboard, where moving focus onto the row brings it in. A failed row now also spans the full width of the popover like every other row, so its timestamp lines up with the rest of the list.
+
+### Fixed
+
+* A monitored project that the provider no longer reports can now be removed in Settings. The project tree was built only from what discovery returned, so a repository that had been deleted, transferred, or moved out of the token's reach had no checkbox left to untick, and every other change re-sent the stranded entry back to CIMon, which kept showing its row in the popover. These now appear under their account as removable rows, and only for an account whose discovery actually succeeded, so a lookup that is still loading or has failed never flags anything.
+
+### Security
+
+* Bumped the development-only npm dependencies `brace-expansion` (denial of service through unbounded intermediate arrays, which bypassed the earlier mitigation) and `undici` (response desynchronization and cross-user information disclosure) to pick up the upstream fixes. Both reach the tree through build, lint, and test tooling only, so neither ships in the app.
+
 ## [0.1.16] (2026-08-02)
 
 ### Added
