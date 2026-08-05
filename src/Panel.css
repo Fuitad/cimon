@@ -99,6 +99,10 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* A scroll container's other axis resolves to `auto`, so without this the Clear pill parked past
+     a row's right edge would raise a horizontal scrollbar. Clipping here rather than on .prow-item
+     leaves the row's own focus ring room to paint (forced-colors draws it as an offset outline). */
+  overflow-x: hidden;
 }
 .panel__list {
   list-style: none;
@@ -200,8 +204,12 @@ body {
   white-space: nowrap;
 }
 
-/* Wraps a row's main button plus its optional Clear action so the two sit side by side. */
+/* Positioning context for the Clear action, which overlays the row's right end rather than sitting
+   beside it, so a failed row spans the same width as every other row. Deliberately not clipped
+   here: .prow fills this box exactly, so a clip would swallow the row's own focus ring. The parked
+   pill is hidden by opacity, and .panel__body clips it out of the scrollable area. */
 .prow-item {
+  position: relative;
   display: flex;
   align-items: center;
 }
@@ -237,28 +245,60 @@ body {
   background: color-mix(in oklch, var(--danger) 12%, transparent);
 }
 
-/* Pill button next to a failed row's status button, dismissing it until the next pipeline run. */
+/* Pill dismissing a failed row until its next pipeline run. Out of flow and hidden until the row is
+   hovered, so it costs the row no width and revealing it never reflows anything: it slides in over
+   the row's right end, where the relative time steps aside for it. Filled with the plain surface
+   rather than a danger tint: lifting it clear of the row's tint is what makes it read as a raised
+   control, and it keeps the small label at 5.3:1 (a tint dark enough to separate drops it under
+   4.5:1). */
 .prow__clear {
-  flex: none;
+  position: absolute;
+  right: var(--space-2);
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
   height: 28px;
-  margin-right: var(--space-2);
   padding: 0 var(--space-3);
   font: inherit;
   font-size: 0.6875rem;
   font-weight: 550;
   color: var(--danger);
-  background: color-mix(in oklch, var(--danger) 10%, transparent);
+  background: var(--surface);
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 120ms var(--ease-out);
+  opacity: 0;
+  /* Its own width plus its right offset parks the pill just past the row's right edge. */
+  transform: translateX(calc(100% + var(--space-2)));
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out),
+    background 120ms var(--ease-out);
+}
+/* Keyboard focus anywhere in the row reveals it too, since there is no pointer to hover with.
+   :has(:focus-visible) rather than :focus-within: a click also leaves focus inside the row, and
+   :focus-within would then strand the pill on screen after the pointer has left. */
+.prow-item:hover .prow__clear,
+.prow-item:has(:focus-visible) .prow__clear {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
 }
 .prow__clear:hover {
-  background: color-mix(in oklch, var(--danger) 18%, transparent);
+  background: color-mix(in oklch, var(--danger) 10%, var(--surface));
 }
 .prow__clear:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--focus-ring);
+}
+/* Only a failed row carries a Clear pill, and .prow--failed is set on exactly that condition. */
+.prow--failed .prow__time {
+  transition: opacity 160ms var(--ease-out);
+}
+.prow-item:hover .prow--failed .prow__time,
+.prow-item:has(:focus-visible) .prow--failed .prow__time {
+  opacity: 0;
 }
 
 .prow__status-icon {
@@ -453,5 +493,12 @@ body {
   .prow__status-icon--running,
   .panel__summary-icon--running {
     animation: none;
+  }
+  /* The Clear action still appears only on hover; it just fades in place instead of sliding. */
+  .prow__clear {
+    transform: none;
+    transition:
+      opacity 120ms var(--ease-out),
+      background 120ms var(--ease-out);
   }
 }
