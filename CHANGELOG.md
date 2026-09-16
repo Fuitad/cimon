@@ -2,6 +2,18 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.18] (2026-09-16)
+
+### Fixed
+
+* Clicking the menu bar icon opens the popover again on macOS 27. Since that upgrade, a left click showed the small Open Settings and Quit menu instead, so the popover could not be opened at all. Right clicking the icon still shows that menu. If you are running 0.1.17 on macOS 27, click the icon, choose Open Settings, and install this update from there.
+* The popover now opens under the icon on the display you clicked when your displays use different scaling, such as a Retina laptop screen next to a standard external monitor. It could previously appear on the other display.
+
+### Security
+
+* Bumped the Rust dependencies `rustls` (TLS 1.3 handshake messages sent at the wrong encryption level were not rejected) and `h2` (a peer could queue empty HTTP/2 data frames without limit, growing memory). Both ship in the app, where they carry CIMon's connections to your CI provider and to the update server.
+* Bumped the development only npm dependencies `nanoid` (infinite loop with a zero size generator), `browserslist` (unbounded memory growth and a crash on untrusted stats files), `smol-toml` (denial of service through malformed TOML), and the Vitest mocker (file read through a redirected mock) to pick up the upstream fixes. None of them ships in the app.
+
 ## [0.1.17] (2026-08-05)
 
 ### Changed
