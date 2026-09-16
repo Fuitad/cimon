@@ -8,6 +8,8 @@
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
+#[cfg(target_os = "macos")]
+use {std::sync::Mutex, tauri::menu::ContextMenu};
 
 use crate::commands::AppState;
 use crate::model::PipelineStatus;
@@ -253,21 +255,38 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     MenuBuilder::new(app).item(&settings).item(&quit).build()
 }
 
+/// The fallback menu on macOS, held here instead of attached to the status item (see
+/// [`build_tray`]) and replaced by [`refresh_menu`] when the locale changes.
+#[cfg(target_os = "macos")]
+struct DetachedMenu(Mutex<Menu<Wry>>);
+
 /// Create the tray icon with its fallback menu and click handlers. Call once during setup.
 ///
 /// Left-click toggles the popover panel; right-click shows the fallback menu (the menu does not
 /// appear on left-click). Every tray event is forwarded to the panel so it can cache the icon
 /// rect for anchoring the popover.
+///
+/// On macOS the menu is NOT attached to the status item. Since macOS 27 a status item that owns a
+/// menu opens it on left-click too, and the click never reaches tray-icon, so the panel could not
+/// open. CIMon keeps the menu itself and pops it up on right-click instead.
+/// SHORTCUT: works around tray-icon 0.24, which Tauri 2 pins. tray-icon 0.25.1 fixes this upstream
+/// (tauri-apps/tray-icon#355); once CIMon's Tauri depends on a tray-icon with that fix, attach the
+/// menu again on every platform and delete `DetachedMenu` and `popup_menu`.
 pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
     let menu = build_menu(app)?;
-    TrayIconBuilder::with_id(TRAY_ID)
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(logo_icon(status_color(None), false, orb_shape(None)))
         // Starts idle: render the white glyph as a template so macOS keeps it visible (white on a
         // dark menu bar, dark on a light one) rather than a fixed colour that can vanish.
-        .icon_as_template(true)
+        .icon_as_template(true);
+    #[cfg(target_os = "macos")]
+    app.manage(DetachedMenu(Mutex::new(menu)));
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder
         .menu(&menu)
         // Left-click is reserved for the panel; the fallback menu shows on right-click only.
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+    builder
         .on_menu_event(|app: &AppHandle, event: tauri::menu::MenuEvent| {
             let id = event.id().as_ref();
             if id == QUIT_ID {
@@ -278,7 +297,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
         })
         .on_tray_icon_event(|tray, event| {
             // Keep the panel's cached tray-icon rect fresh so the popover anchors correctly.
-            crate::panel::on_tray_event(&event);
+            crate::panel::on_tray_event(tray.app_handle(), &event);
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -287,8 +306,30 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
             {
                 crate::panel::toggle(tray.app_handle());
             }
+            #[cfg(target_os = "macos")]
+            if let TrayIconEvent::Click {
+                button: MouseButton::Right,
+                button_state: MouseButtonState::Down,
+                ..
+            } = event
+            {
+                popup_menu(tray.app_handle());
+            }
         })
         .build(app)
+}
+
+/// Pop the detached fallback menu up at the cursor (macOS). muda needs a window to show a context
+/// menu from; with no position it places the menu at the mouse location in screen coordinates, so
+/// the hidden panel window works. The menu is cloned out first so the lock is not held while the
+/// menu runs its modal loop.
+#[cfg(target_os = "macos")]
+fn popup_menu(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window(crate::panel::PANEL) else {
+        return;
+    };
+    let menu = app.state::<DetachedMenu>().0.lock().unwrap().clone();
+    let _ = menu.popup(panel.as_ref().window());
 }
 
 /// Update the tray icon to reflect the aggregate worst status. Call from the poller.
@@ -308,6 +349,13 @@ pub fn set_status(tray: &TrayIcon, status: Option<PipelineStatus>) {
 /// Rebuild the tray's fallback menu after the locale changes (so its two items are retranslated).
 pub fn refresh_menu(app: &AppHandle, tray: &TrayIcon) -> tauri::Result<()> {
     let menu = build_menu(app)?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tray;
+        *app.state::<DetachedMenu>().0.lock().unwrap() = menu;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
     tray.set_menu(Some(menu))
 }
 

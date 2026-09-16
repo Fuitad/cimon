@@ -5,14 +5,17 @@
 //! shown/hidden on demand so the webview stays warm and opening is instant. Positioning is done in
 //! Rust: we cache the tray-icon rect from the tray event stream and center the panel under it.
 //!
-//! Cross-platform: no `#[cfg(target_os)]` here. `TrayCenter` anchors under the icon on macOS (menu
-//! bar at the top) and above it on Windows (tray at the bottom); transparency (for the rounded
-//! card's corners) is enabled via `app.macOSPrivateApi` in `tauri.conf.json`.
+//! Cross-platform: the panel anchors under the icon on macOS (menu bar at the top, positioned in
+//! logical points to survive mixed-scale displays) and above it on Windows (tray at the bottom);
+//! transparency (for the rounded card's corners) is enabled via `app.macOSPrivateApi` in
+//! `tauri.conf.json`.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::tray::TrayIconEvent;
+#[cfg(target_os = "macos")]
+use tauri::LogicalPosition;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
@@ -46,6 +49,13 @@ const REOPEN_GUARD: Duration = Duration::from_millis(250);
 /// multi-monitor setup when the panel window's frame is not on any monitor.
 static TRAY_RECT: Mutex<Option<(PhysicalPosition<f64>, PhysicalSize<f64>)>> = Mutex::new(None);
 
+/// macOS: the scale factor of the display the tray icon was last clicked on, captured alongside
+/// [`TRAY_RECT`] because the rect's pixels are in that display's scale and the rect alone cannot
+/// tell which one it is (see [`macos_panel_position`]). Captured at click time so a later re-anchor
+/// (a content height change) does not depend on where the cursor has moved since.
+#[cfg(target_os = "macos")]
+static TRAY_SCALE: Mutex<Option<f64>> = Mutex::new(None);
+
 /// Create the panel window (hidden). Called once during setup, after the tray exists.
 pub fn build_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, PANEL, WebviewUrl::App("panel.html".into()))
@@ -65,22 +75,65 @@ pub fn build_panel(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 
 /// Cache the tray icon's physical rect from the tray event stream so the panel can anchor itself
 /// under the icon. Called from the tray's event handler for every tray event. tray-icon reports a
-/// physical rect, so the scale factor passed to `to_physical` is irrelevant.
-pub fn on_tray_event(event: &TrayIconEvent) {
+/// physical rect, so the scale factor passed to `to_physical` is irrelevant. On macOS it also
+/// records the scale of the display under the cursor, i.e. the one whose menu bar was clicked.
+pub fn on_tray_event(app: &AppHandle, event: &TrayIconEvent) {
     let TrayIconEvent::Click { rect, .. } = event else {
         return;
     };
     let position: PhysicalPosition<f64> = rect.position.to_physical(1.0);
     let size: PhysicalSize<f64> = rect.size.to_physical(1.0);
     *TRAY_RECT.lock().unwrap() = Some((position, size));
+    #[cfg(target_os = "macos")]
+    {
+        *TRAY_SCALE.lock().unwrap() = cursor_display_scale(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+/// Scale factor of the display under the cursor (macOS). tao reports the cursor in the primary
+/// display's scale, so dividing by it gives global logical points, the one coordinate space in which
+/// displays never overlap.
+#[cfg(target_os = "macos")]
+fn cursor_display_scale(app: &AppHandle) -> Option<f64> {
+    let cursor = app.cursor_position().ok()?;
+    let primary_scale = app.primary_monitor().ok()??.scale_factor();
+    let monitors: Vec<_> = app
+        .available_monitors()
+        .ok()?
+        .iter()
+        .map(|m| (*m.position(), *m.size(), m.scale_factor()))
+        .collect();
+    monitor_scale_at(
+        LogicalPosition::new(cursor.x / primary_scale, cursor.y / primary_scale),
+        &monitors,
+    )
+}
+
+/// Scale factor of the monitor whose global logical bounds contain `point`. tao reports each
+/// monitor's origin and size in that monitor's own pixels, so each is divided by its own scale.
+#[cfg(target_os = "macos")]
+fn monitor_scale_at(
+    point: LogicalPosition<f64>,
+    monitors: &[(PhysicalPosition<i32>, PhysicalSize<u32>, f64)],
+) -> Option<f64> {
+    monitors
+        .iter()
+        .find(|(pos, size, s)| {
+            let (left, top) = (pos.x as f64 / s, pos.y as f64 / s);
+            let (width, height) = (size.width as f64 / s, size.height as f64 / s);
+            point.x >= left && point.x < left + width && point.y >= top && point.y < top + height
+        })
+        .map(|(_, _, s)| *s)
 }
 
 /// Top-left physical position that centers a panel of `panel_size` horizontally under the tray
-/// icon described by `tray_pos`/`tray_size`. On macOS the menu bar sits at the top, so a panel
-/// placed a full window-height above the icon would land off-screen (negative y); there it drops
-/// to just below the icon instead. On Windows the tray sits at the bottom, so the fallback is
-/// below the icon (`tray_y + tray_height`). Mirrors tauri-plugin-positioner's TrayCenter math,
-/// minus the monitor lookup that made it crash.
+/// icon described by `tray_pos`/`tray_size`. The Windows tray sits at the bottom, so the panel goes
+/// above the icon, falling back to below it (`tray_y + tray_height`) when that would land
+/// off-screen. Mirrors tauri-plugin-positioner's TrayCenter math, minus the monitor lookup that made
+/// it crash. macOS uses [`macos_panel_position`] instead.
+#[cfg(not(target_os = "macos"))]
 fn tray_center_position(
     tray_pos: PhysicalPosition<f64>,
     tray_size: PhysicalSize<f64>,
@@ -95,11 +148,32 @@ fn tray_center_position(
 
     let x = tray_x + tray_width / 2 - win_width / 2;
     let y = tray_y - win_height;
-    #[cfg(target_os = "macos")]
-    let y = if y < 0 { tray_y } else { y };
     #[cfg(target_os = "windows")]
     let y = if y < 0 { tray_y + _tray_height } else { y };
     PhysicalPosition::new(x, y)
+}
+
+/// Top-left position, in global logical points, that centers a `panel_width`-wide panel under the
+/// tray icon on macOS, with its top at the top of the icon's menu bar (AppKit then keeps the window
+/// just below the bar).
+///
+/// macOS has no global physical coordinate space: tray-icon reports the rect in the pixels of the
+/// display the status item sits on, while `set_position` with a physical position divides by the
+/// PANEL window's scale. With the panel on a 2x built-in display and the icon on a 1x external
+/// monitor, that halves the coordinates and drops the panel on the wrong display. So the rect is
+/// converted to points with `scale`, the scale of the display that was clicked. That scale cannot be
+/// inferred from the rect: with a 1x external top-aligned beside a 2x built-in, the external icon's
+/// 1x pixels also fall inside the built-in's 2x pixel rectangle. [`on_tray_event`] resolves it from
+/// the cursor instead.
+#[cfg(target_os = "macos")]
+fn macos_panel_position(
+    tray_pos: PhysicalPosition<f64>,
+    tray_size: PhysicalSize<f64>,
+    panel_width: f64,
+    scale: f64,
+) -> LogicalPosition<f64> {
+    let center_x = tray_pos.x + tray_size.width / 2.0;
+    LogicalPosition::new(center_x / scale - panel_width / 2.0, tray_pos.y / scale)
 }
 
 /// Anchor the panel centered under the tray icon, using the rect cached by [`on_tray_event`].
@@ -109,10 +183,29 @@ fn anchor_to_tray(win: &WebviewWindow) {
     let Some((tray_pos, tray_size)) = *TRAY_RECT.lock().unwrap() else {
         return;
     };
-    let Ok(panel_size) = win.outer_size() else {
-        return;
-    };
-    let _ = win.set_position(tray_center_position(tray_pos, tray_size, panel_size));
+    #[cfg(target_os = "macos")]
+    {
+        let scale = match *TRAY_SCALE.lock().unwrap() {
+            Some(scale) => scale,
+            None => match win.scale_factor() {
+                Ok(scale) => scale,
+                Err(_) => return,
+            },
+        };
+        let _ = win.set_position(macos_panel_position(
+            tray_pos,
+            tray_size,
+            PANEL_WIDTH,
+            scale,
+        ));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Ok(panel_size) = win.outer_size() else {
+            return;
+        };
+        let _ = win.set_position(tray_center_position(tray_pos, tray_size, panel_size));
+    }
 }
 
 /// Toggle the panel: hide it if visible, otherwise anchor + show it. Called from the tray's
@@ -161,6 +254,10 @@ pub fn show_for_fixtures(app: &AppHandle) {
                 * scale;
             let pos = PhysicalPosition::new(size.width as f64 - inset, 2.0);
             *TRAY_RECT.lock().unwrap() = Some((pos, PhysicalSize::new(40.0 * scale, 24.0 * scale)));
+            #[cfg(target_os = "macos")]
+            {
+                *TRAY_SCALE.lock().unwrap() = Some(scale);
+            }
         }
     }
     show(app);
@@ -198,6 +295,7 @@ pub fn notify_changed(app: &AppHandle) {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn tray_center_centers_panel_horizontally_under_the_icon() {
         // Tray icon near the top of a right-hand monitor (physical coords), 44x24 px.
@@ -208,11 +306,76 @@ mod tests {
 
         let p = tray_center_position(tray_pos, tray_size, panel_size);
 
-        // Horizontally centered under the icon, on every platform.
+        // Horizontally centered under the icon.
         assert_eq!(p.x, 2000 + 44 / 2 - 640 / 2);
-        // On macOS the menu bar is at the top, so a panel taller than the icon's y would land
-        // off the top of the screen; it drops to just below the icon (y == tray_y) instead.
-        #[cfg(target_os = "macos")]
-        assert_eq!(p.y, 12);
+    }
+
+    /// Where the panel goes on macOS for a click with the cursor at `cursor` (global logical
+    /// points) on an icon whose rect tray-icon reported as `tray_pos`/`tray_size`.
+    #[cfg(target_os = "macos")]
+    fn place(
+        monitors: &[(PhysicalPosition<i32>, PhysicalSize<u32>, f64)],
+        cursor: (f64, f64),
+        tray_pos: (f64, f64),
+        tray_size: (f64, f64),
+    ) -> LogicalPosition<f64> {
+        let scale = monitor_scale_at(LogicalPosition::new(cursor.0, cursor.1), monitors)
+            .expect("cursor is on a monitor");
+        macos_panel_position(
+            PhysicalPosition::new(tray_pos.0, tray_pos.1),
+            PhysicalSize::new(tray_size.0, tray_size.1),
+            PANEL_WIDTH,
+            scale,
+        )
+    }
+
+    /// A 2x built-in display at the origin and a 1x external immediately to its right, with the
+    /// external's top at `external_top`. tao reports each monitor's origin and size in that monitor's
+    /// own pixels.
+    #[cfg(target_os = "macos")]
+    fn built_in_and_external(
+        external_top: i32,
+    ) -> [(PhysicalPosition<i32>, PhysicalSize<u32>, f64); 2] {
+        [
+            (
+                PhysicalPosition::new(0, 0),
+                PhysicalSize::new(3456, 2234),
+                2.0,
+            ),
+            (
+                PhysicalPosition::new(1728, external_top),
+                PhysicalSize::new(1920, 1080),
+                1.0,
+            ),
+        ]
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_panel_lands_under_the_icon_on_the_clicked_display_with_mixed_scales() {
+        let external_expected = LogicalPosition::new(2763.0 + 17.0 - PANEL_WIDTH / 2.0, -574.0);
+        let built_in_expected = LogicalPosition::new(570.0 + 17.0 - PANEL_WIDTH / 2.0, 0.0);
+
+        // External raised above the built-in. The icon on the external is reported at 1x, the one
+        // on the built-in at 2x, while the hidden panel window sits on the built-in.
+        let monitors = built_in_and_external(-572);
+        let external_click = ((2780.0, -557.0), (2763.0, -574.0), (34.0, 33.0));
+        let built_in_click = ((587.0, 16.0), (1140.0, 0.0), (68.0, 66.0));
+        let (c, t, s) = external_click;
+        assert_eq!(place(&monitors, c, t, s), external_expected);
+        let (c, t, s) = built_in_click;
+        assert_eq!(place(&monitors, c, t, s), built_in_expected);
+
+        // Tops aligned: the external icon's 1x pixels also fall inside the built-in's 2x pixel
+        // rectangle, so only the cursor's logical position can tell the displays apart. The result
+        // must not depend on the order the monitors are listed in.
+        let mut monitors = built_in_and_external(0);
+        for _ in 0..2 {
+            let p = place(&monitors, (2780.0, 16.0), (2763.0, 0.0), (34.0, 33.0));
+            assert_eq!(p, LogicalPosition::new(external_expected.x, 0.0));
+            let (c, t, s) = built_in_click;
+            assert_eq!(place(&monitors, c, t, s), built_in_expected);
+            monitors.reverse();
+        }
     }
 }
