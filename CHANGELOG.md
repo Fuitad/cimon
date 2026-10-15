@@ -2,6 +2,14 @@
 
 All notable user-facing changes to CIMon are documented here, newest first.
 
+## [0.1.19] (2026-10-15)
+
+### Security
+
+* Bumped the Rust dependency `rustls` to 0.23.46. It carries CIMon's TLS connections to your CI provider and to the update server. The upstream fixes cover a downgrade of later connections to classical key exchange after an unauthenticated ServerHello, and debug output of client session values that could expose TLS secrets. Two further fixes in the same release (buffered data sent after an Encrypted Client Hello rejection, and oversized brotli certificate decompression) concern features CIMon does not enable.
+* Bumped `quinn-proto` in the Rust lockfile to pick up its upstream fixes. It is only reachable through an HTTP/3 feature CIMon does not compile, so it does not ship in the app.
+* Bumped the development only npm dependencies `brace-expansion`, `undici`, `source-map-js` (denial of service), and `smol-toml` (quadratic-time parse) to pick up the upstream fixes. None of them ships in the app.
+
 ## [0.1.18] (2026-09-16)
 
 ### Fixed
