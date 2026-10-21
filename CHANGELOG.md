@@ -8,6 +8,7 @@ All notable user-facing changes to CIMon are documented here, newest first.
 
 * Bumped the Rust dependencies `rustls-webpki` to 0.103.16 and `webpki-roots` and `webpki-root-certs` to 1.0.10. They verify the certificates of CIMon's TLS connections to your CI provider and to the update server. The upstream fixes stop certificate verification from accepting certificates issued through distrusted emSign intermediates.
 * Removed the `zip` crate from the app by building the updater without its zip archive support. CIMon's updates are a plain Windows installer and a macOS `.tar.gz` bundle, so that support was never used, and it carried advisories about unsafe permissions and symbolic links during archive extraction.
+* Bumped the development only npm dependency `vite` to 8.3.5 to pick up the upstream `launch-editor` fixes (command execution through crafted editor arguments). It does not ship in the app.
 
 ## [0.1.19] (2026-10-15)
 
