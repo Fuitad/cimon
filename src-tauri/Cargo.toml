@@ -52,7 +52,11 @@ zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 rust-i18n = "4"
 sys-locale = "0.3"
-tauri-plugin-updater = "2"
+# Default features minus `zip`: that feature only adds the `zip` crate (Windows .zip update
+# packages, RUSTSEC-2026-0367..0369 against zip 4.x) and tar/flate2 for Linux AppImage.tar.gz.
+# CIMon's update targets are the raw NSIS -setup.exe and the macOS .app.tar.gz (tar/flate2 are
+# unconditional on macOS), so neither code path is used.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 semver = "1"
 
 # Direct access to the deprecated NSUserNotificationCenter (already in the tree via
