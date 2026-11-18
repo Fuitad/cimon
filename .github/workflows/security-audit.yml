@@ -63,5 +63,24 @@ jobs:
       - run: npm ci
       # Fail on high/critical advisories. Moderate/low (mostly transitive dev tooling) are noisy
       # for a gating job; raise the bar here and review the full report from the run logs.
+      #
+      # IGNORED lists advisories with no patched release that were reviewed as not exploitable
+      # here. Remove an entry as soon as a fixed version ships, so the bump is enforced.
+      # - GHSA-fc5q-39xc-vjpf: picomatch ReDoS, every version <= 4.0.7 (no fix published).
+      #   Dev-only (vite, vitest, knip); globs come from repo config, never from user input.
       - name: npm audit
-        run: npm audit --audit-level=high
+        env:
+          IGNORED: "GHSA-fc5q-39xc-vjpf"
+        run: |
+          npm audit || true
+          npm audit --json > audit.json || true
+          blocking=$(jq -r --arg ignored "$IGNORED" '
+            ($ignored | split(" ")) as $skip
+            | [.vulnerabilities[].via[] | objects
+               | select(.severity == "high" or .severity == "critical")
+               | select((.url | split("/") | last) as $id | $skip | index($id) | not)
+               | .url] | unique | .[]' audit.json)
+          if [ -n "$blocking" ]; then
+            echo "::error::Blocking high/critical advisories:"; echo "$blocking"; exit 1
+          fi
+          echo "No blocking high/critical advisories (ignored: $IGNORED)"
